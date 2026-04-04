@@ -39,4 +39,6 @@ COPY --from=builder /app/apps/worker/dist ./dist
 # セッション保存ディレクトリ（Render Disk でマウント）
 RUN mkdir -p ./data/sessions
 
+EXPOSE 3001
+
 CMD ["node", "dist/index.js"]

@@ -1,9 +1,20 @@
+import { createServer } from "node:http";
 import { createThreadsPostWorker } from "./jobs/post-to-threads.js";
 import { createInstagramPostWorker } from "./jobs/post-to-instagram.js";
 import { createCollectTrendsWorker } from "./jobs/collect-trends.js";
 
 async function main(): Promise<void> {
   console.log("[worker] Starting SNS Automation Worker...");
+
+  // Render web service requires an HTTP server for health checks
+  const port = Number(process.env.PORT ?? 3001);
+  const server = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", worker: "running" }));
+  });
+  server.listen(port, () => {
+    console.log(`[worker] Health server listening on port ${port}`);
+  });
 
   // Threads 投稿ワーカーを起動
   const threadsWorker = createThreadsPostWorker();
