@@ -10,3 +10,4 @@ dist/
 !.env.example
 apps/api/.env
 apps/worker/.env
+.vercel
