@@ -4,3 +4,9 @@ dist/
 .turbo/
 .env
 *.log
+
+.env
+.env.*
+!.env.example
+apps/api/.env
+apps/worker/.env
