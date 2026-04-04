@@ -10,7 +10,7 @@ import { getPosts, type ApiPost } from "@/lib/api";
 import { formatDate, formatNumber } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { PlusCircle } from "lucide-react";
-import type { PostStatus } from "@/types/post";
+import type { Platform, PostStatus } from "@/types/post";
 
 const statusFilters: { label: string; value: PostStatus | "all" }[] = [
   { label: "すべて", value: "all" },
@@ -97,7 +97,7 @@ export default function PostsPage() {
                 return (
                   <tr key={post.id} className="hover:bg-muted/50">
                     <td className="py-3">
-                      <PlatformIcon platform={post.platform} />
+                      <PlatformIcon platform={post.platform as Platform} />
                     </td>
                     <td className="max-w-sm truncate py-3">
                       <Link

@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/posts/status-badge";
 import { PlatformIcon } from "@/components/posts/platform-icon";
 import { getPostAnalytics } from "@/lib/api";
 import { formatDate, formatNumber } from "@/lib/utils";
+import type { Platform, PostStatus } from "@/types/post";
 import {
   ArrowLeft,
   Heart,
@@ -66,8 +67,8 @@ export default async function PostDetailPage({
         <div>
           <h1 className="text-2xl font-bold text-foreground">投稿詳細</h1>
           <div className="mt-2 flex items-center gap-3">
-            <PlatformIcon platform={post.platform} />
-            <StatusBadge status={post.status} />
+            <PlatformIcon platform={post.platform as Platform} />
+            <StatusBadge status={post.status as PostStatus} />
             <span className="text-sm text-muted-foreground">
               {post.id}
             </span>

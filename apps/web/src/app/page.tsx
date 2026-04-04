@@ -2,6 +2,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/posts/status-badge";
 import { PlatformIcon } from "@/components/posts/platform-icon";
 import { getPosts } from "@/lib/api";
+import type { Platform, PostStatus } from "@/types/post";
 import { formatDate, formatNumber } from "@/lib/utils";
 import {
   FileText,
@@ -124,25 +125,25 @@ export default async function DashboardPage() {
               {recentPosts.map((post) => (
                 <tr key={post.id} className="hover:bg-muted/50">
                   <td className="py-3">
-                    <PlatformIcon platform={post.platform} />
+                    <PlatformIcon platform={post.platform as Platform} />
                   </td>
                   <td className="max-w-xs truncate py-3">
                     <Link
                       href={`/posts/${post.id}`}
                       className="hover:text-primary hover:underline"
                     >
-                      {post.contentText.slice(0, 60)}
-                      {post.contentText.length > 60 ? "..." : ""}
+                      {(post.contentText ?? "").slice(0, 60)}
+                      {(post.contentText ?? "").length > 60 ? "..." : ""}
                     </Link>
                   </td>
                   <td className="py-3">
-                    <StatusBadge status={post.status} />
+                    <StatusBadge status={post.status as PostStatus} />
                   </td>
                   <td className="py-3 text-right font-medium">
-                    {formatNumber(post.clickCount)}
+                    {formatNumber(post.redirectLinks?.reduce((s, l) => s + l.clickCount, 0) ?? 0)}
                   </td>
                   <td className="py-3 text-right font-medium">
-                    {post.metrics ? formatNumber(post.metrics.views) : "-"}
+                    {post.postMetrics?.length ? formatNumber(post.postMetrics[0].views ?? 0) : "-"}
                   </td>
                   <td className="py-3 text-right text-muted-foreground">
                     {formatDate(post.createdAt)}
