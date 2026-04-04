@@ -1,0 +1,46 @@
+services:
+  # ── SNS API (Hono) ──────────────────────────────────────────────
+  - type: web
+    name: sns-automation-api
+    runtime: node
+    rootDir: apps/api
+    buildCommand: npm install && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: DATABASE_URL
+        sync: false   # Neon の接続文字列を Render ダッシュボードで設定
+      - key: REDIS_URL
+        sync: false   # Upstash Redis URL (rediss://...) を設定
+      - key: REDIRECT_BASE_URL
+        sync: false   # デプロイ後の API URL を設定
+
+  # ── SNS Worker (BullMQ + Playwright) ────────────────────────────
+  - type: worker
+    name: sns-automation-worker
+    runtime: docker
+    rootDir: .
+    dockerfilePath: apps/worker/Dockerfile
+    disk:
+      name: worker-sessions
+      mountPath: /app/apps/worker/data/sessions
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REDIS_URL
+        sync: false   # Upstash Redis URL を設定（API と同じ値）
+      - key: SESSIONS_DIR
+        value: /app/apps/worker/data/sessions
+      - key: THREADS_USERNAME
+        sync: false
+      - key: THREADS_PASSWORD
+        sync: false
+      - key: INSTAGRAM_USERNAME
+        sync: false
+      - key: INSTAGRAM_PASSWORD
+        sync: false

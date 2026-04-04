@@ -1,0 +1,40 @@
+import { createThreadsPostWorker } from "./jobs/post-to-threads.js";
+import { createInstagramPostWorker } from "./jobs/post-to-instagram.js";
+import { createCollectTrendsWorker } from "./jobs/collect-trends.js";
+
+async function main(): Promise<void> {
+  console.log("[worker] Starting SNS Automation Worker...");
+
+  // Threads 投稿ワーカーを起動
+  const threadsWorker = createThreadsPostWorker();
+  console.log("[worker] Threads post worker started");
+
+  // Instagram 投稿ワーカーを起動
+  const instagramWorker = createInstagramPostWorker();
+  console.log("[worker] Instagram post worker started");
+
+  // トレンド収集ワーカーを起動
+  const collectTrendsWorker = createCollectTrendsWorker();
+  console.log("[worker] Collect trends worker started");
+
+  // グレースフルシャットダウン
+  const shutdown = async (signal: string) => {
+    console.log(`[worker] Received ${signal}, shutting down...`);
+    await Promise.all([
+      threadsWorker.close(),
+      instagramWorker.close(),
+      collectTrendsWorker.close(),
+    ]);
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  console.log("[worker] Worker is running. Waiting for jobs...");
+}
+
+main().catch((err) => {
+  console.error("[worker] Fatal error:", err);
+  process.exit(1);
+});
