@@ -16,7 +16,11 @@ export function ConditionalLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Sidebar />
-      <main className="ml-64 min-h-screen p-8">{children}</main>
+      <main className="ml-64 min-h-screen p-8 max-w-[calc(100vw-16rem)]">
+        <div className="max-w-6xl">
+          {children}
+        </div>
+      </main>
     </>
   );
 }

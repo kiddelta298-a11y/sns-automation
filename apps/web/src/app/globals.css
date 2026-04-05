@@ -1,17 +1,85 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #ffffff;
-  --color-foreground: #0a0a0a;
-  --color-muted: #f5f5f5;
-  --color-muted-foreground: #737373;
-  --color-border: #e5e5e5;
-  --color-primary: #2563eb;
+  /* ── Dark base ── */
+  --color-background:        #08080f;
+  --color-foreground:        #f0eeff;
+  --color-muted:             rgba(255, 255, 255, 0.06);
+  --color-muted-foreground:  rgba(240, 238, 255, 0.42);
+  --color-border:            rgba(255, 255, 255, 0.08);
+
+  /* ── Primary: violet ── */
+  --color-primary:            #8b5cf6;
   --color-primary-foreground: #ffffff;
-  --color-destructive: #ef4444;
-  --color-accent: #f0f4ff;
-  --color-card: #ffffff;
-  --color-card-foreground: #0a0a0a;
+
+  /* ── Destructive ── */
+  --color-destructive:        #f43f5e;
+
+  /* ── Accent ── */
+  --color-accent:             rgba(139, 92, 246, 0.18);
+
+  /* ── Card: glass ── */
+  --color-card:               rgba(255, 255, 255, 0.035);
+  --color-card-foreground:    #f0eeff;
+
+  /* ── Sidebar ── */
+  --color-sidebar:            rgba(255, 255, 255, 0.02);
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Page background with top glow ── */
+body {
+  background-color: var(--color-background);
+  background-image:
+    radial-gradient(ellipse 70% 40% at 60% -5%,  rgba(109, 40, 217, 0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 30% at 0%   80%,  rgba(91,  33, 182, 0.10) 0%, transparent 60%);
+  background-attachment: fixed;
+}
+
+/* ── Glass utility ── */
+.glass {
+  background:   rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ── Gradient text ── */
+.gradient-text {
+  background: linear-gradient(135deg, #a78bfa 0%, #f0abfc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Gradient button glow ── */
+.btn-gradient {
+  background: linear-gradient(135deg, #7c3aed 0%, #9333ea 50%, #a855f7 100%);
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.35);
+  transition: box-shadow 0.2s, transform 0.15s;
+}
+.btn-gradient:hover:not(:disabled) {
+  box-shadow: 0 0 32px rgba(139, 92, 246, 0.55);
+  transform: translateY(-1px);
+}
+.btn-gradient:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, 0.3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139, 92, 246, 0.5); }
+
+/* ── Table row hover ── */
+tr.hover-row:hover td { background: rgba(139, 92, 246, 0.06); }
+
+/* ── Input focus ring ── */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.6) !important;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12);
 }

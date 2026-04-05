@@ -3,8 +3,8 @@ import { ConditionalLayout } from "@/components/layout/conditional-layout";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SNS Automation",
-  description: "SNS自動化システム ダッシュボード",
+  title: "SNS コントロールタワー",
+  description: "SNS投稿の自動収集・分析・投稿管理システム",
 };
 
 export default function RootLayout({
