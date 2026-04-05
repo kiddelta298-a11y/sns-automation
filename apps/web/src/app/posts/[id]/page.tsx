@@ -15,7 +15,10 @@ import {
   Eye,
   MousePointerClick,
   UserCheck,
+  PencilLine,
 } from "lucide-react";
+
+const EDITABLE_STATUSES: PostStatus[] = ["draft", "scheduled"];
 
 function MetricItem({
   icon: Icon,
@@ -74,7 +77,14 @@ export default async function PostDetailPage({
             </span>
           </div>
         </div>
-        <Button variant="outline">編集</Button>
+        {EDITABLE_STATUSES.includes(post.status as PostStatus) && (
+          <Link href={`/posts/${post.id}/edit`}>
+            <Button variant="outline" className="gap-2">
+              <PencilLine className="h-4 w-4" />
+              編集
+            </Button>
+          </Link>
+        )}
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">

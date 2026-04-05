@@ -107,6 +107,23 @@ export function deleteAccount(id: string) {
   });
 }
 
+export function updatePost(id: string, data: {
+  contentText?: string;
+  linkUrl?: string;
+  status?: string;
+}) {
+  return apiFetch<ApiPost>(`/api/posts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deletePost(id: string) {
+  return apiFetch<{ message: string }>(`/api/posts/${id}`, {
+    method: "DELETE",
+  });
+}
+
 // ---- Analytics ----
 
 export function getPostAnalytics(postId: string) {
