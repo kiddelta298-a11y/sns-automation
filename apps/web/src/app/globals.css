@@ -75,7 +75,9 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: rgba(139, 92, 246, 0.5); }
 
 /* ── Table row hover ── */
-tr.hover-row:hover td { background: rgba(139, 92, 246, 0.06); }
+tr.hover-row:hover td    { background: rgba(139, 92, 246, 0.06); }
+tr.dashboard-row:hover td { background: rgba(139, 92, 246, 0.06); }
+a.dashboard-link:hover   { color: #c4b5fd !important; }
 
 /* ── Input focus ring ── */
 input:focus, select:focus, textarea:focus {

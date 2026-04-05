@@ -62,15 +62,7 @@ export default async function DashboardPage() {
     <div>
       {/* ── ヘッダー ── */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold"
-          style={{
-            background: "linear-gradient(135deg, #c4b5fd 0%, #f0abfc 100%)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            backgroundClip: "text",
-          }}>
-          ダッシュボード
-        </h1>
+        <h1 className="text-3xl font-bold gradient-text">ダッシュボード</h1>
         <p className="mt-1 text-sm" style={{ color: "rgba(240,238,255,0.42)" }}>
           投稿パフォーマンスの概要
         </p>
@@ -114,11 +106,10 @@ export default async function DashboardPage() {
           <div className="flex items-center justify-between px-6 py-4"
             style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
             <CardTitle className="text-base">直近の投稿</CardTitle>
-            <Link href="/posts"
-              className="text-xs font-medium transition-colors"
+            <Link
+              href="/posts"
+              className="text-xs font-medium"
               style={{ color: "#a78bfa" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "#c4b5fd")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#a78bfa")}
             >
               すべて表示 →
             </Link>
@@ -138,21 +129,16 @@ export default async function DashboardPage() {
               </thead>
               <tbody>
                 {recentPosts.map((post) => (
-                  <tr key={post.id}
-                    className="transition-colors"
-                    style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(139,92,246,0.06)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                  >
+                  <tr key={post.id} className="dashboard-row"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
                     <td className="px-6 py-3.5">
                       <PlatformIcon platform={post.platform as Platform} />
                     </td>
                     <td className="max-w-xs px-6 py-3.5">
-                      <Link href={`/posts/${post.id}`}
-                        className="transition-colors"
+                      <Link
+                        href={`/posts/${post.id}`}
+                        className="dashboard-link"
                         style={{ color: "rgba(240,238,255,0.75)" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.color = "#c4b5fd")}
-                        onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(240,238,255,0.75)")}
                       >
                         {(post.contentText ?? "").slice(0, 60)}
                         {(post.contentText ?? "").length > 60 ? "…" : ""}
