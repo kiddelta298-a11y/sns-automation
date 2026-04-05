@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { createThreadsPostWorker } from "./jobs/post-to-threads.js";
 import { createInstagramPostWorker } from "./jobs/post-to-instagram.js";
 import { createCollectTrendsWorker } from "./jobs/collect-trends.js";
+import { startScheduleExecutor } from "./jobs/schedule-executor.js";
 
 async function main(): Promise<void> {
   console.log("[worker] Starting SNS Automation Worker...");
@@ -28,9 +29,14 @@ async function main(): Promise<void> {
   const collectTrendsWorker = createCollectTrendsWorker();
   console.log("[worker] Collect trends worker started");
 
+  // 予約投稿スケジューラーを起動
+  const schedulerTimer = startScheduleExecutor();
+  console.log("[worker] Schedule executor started");
+
   // グレースフルシャットダウン
   const shutdown = async (signal: string) => {
     console.log(`[worker] Received ${signal}, shutting down...`);
+    clearInterval(schedulerTimer);
     await Promise.all([
       threadsWorker.close(),
       instagramWorker.close(),

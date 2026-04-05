@@ -109,7 +109,7 @@ export class ThreadsScraper {
 
   /** ページからDOM解析で投稿一覧を抽出 */
   private async _extractPostsFromPage(page: Page, limit: number): Promise<ScrapedPost[]> {
-    return page.evaluate((limit) => {
+    const raw = await page.evaluate((limit) => {
       const results: {
         authorUsername: string | null;
         authorFollowers: number | null;
@@ -201,6 +201,13 @@ export class ThreadsScraper {
 
       return results;
     }, limit);
+
+    // page.evaluate はブラウザコンテキストで動くため Date を返せない
+    // 文字列を Date に変換して ScrapedPost 型に合わせる
+    return raw.map((r) => ({
+      ...r,
+      postedAt: r.postedAt ? new Date(r.postedAt) : null,
+    }));
   }
 }
 
