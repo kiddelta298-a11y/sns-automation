@@ -13,6 +13,13 @@ async function main(): Promise<void> {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok", worker: "running" }));
   });
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.warn(`[worker] Port ${port} already in use — health server skipped (local dev)`);
+    } else {
+      console.error("[worker] Health server error:", err);
+    }
+  });
   server.listen(port, () => {
     console.log(`[worker] Health server listening on port ${port}`);
   });
