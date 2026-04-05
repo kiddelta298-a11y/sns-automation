@@ -17,6 +17,7 @@ import { industriesRouter } from "./routes/industries.js";
 import { trendsRouter } from "./routes/trends.js";
 import { settingsRouter } from "./routes/settings.js";
 import { uploadsRouter, serveUpload } from "./routes/uploads.js";
+import { campaignsRouter } from "./routes/campaigns.js";
 import { handleError } from "./lib/errors.js";
 
 const app = new Hono();
@@ -42,6 +43,9 @@ app.route("/api/settings", settingsRouter);
 
 // Redirector (short URL)
 app.route("/r", redirectorRouter);
+
+// Campaigns & UTM
+app.route("/api/campaigns", campaignsRouter);
 
 // Uploads API
 app.route("/api/uploads", uploadsRouter);

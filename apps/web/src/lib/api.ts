@@ -343,6 +343,56 @@ export function getMetrics(jobId: string) {
   return apiFetch<ApiMetrics>(`/api/trends/metrics/${jobId}`);
 }
 
+// ---- Campaigns ----
+
+export interface ApiCampaign {
+  id: string;
+  name: string;
+  utmCampaign: string;
+  startDate: string | null;
+  endDate: string | null;
+  goalRegistrations: number | null;
+  status: string;
+  posts?: { id: string }[];
+}
+
+export function getCampaigns() {
+  return apiFetch<ApiCampaign[]>("/api/campaigns");
+}
+
+export function createCampaign(data: {
+  name: string;
+  utmCampaign: string;
+  startDate?: string;
+  endDate?: string;
+  goalRegistrations?: number;
+  status?: string;
+}) {
+  return apiFetch<ApiCampaign>("/api/campaigns", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateCampaign(id: string, data: Partial<{
+  name: string;
+  startDate: string;
+  endDate: string;
+  goalRegistrations: number;
+  status: string;
+}>) {
+  return apiFetch<ApiCampaign>(`/api/campaigns/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteCampaign(id: string) {
+  return apiFetch<{ success: boolean }>(`/api/campaigns/${id}`, {
+    method: "DELETE",
+  });
+}
+
 // ---- Uploads ----
 
 export function uploadImage(file: File): Promise<{ url: string; filename: string }> {

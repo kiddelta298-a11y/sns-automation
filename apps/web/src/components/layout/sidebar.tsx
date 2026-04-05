@@ -11,6 +11,7 @@ import {
   TrendingUp,
   Users,
   CalendarDays,
+  Megaphone,
   LogOut,
 } from "lucide-react";
 
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/posts", label: "投稿一覧", icon: FileText },
   { href: "/posts/new", label: "新規投稿", icon: PlusCircle },
   { href: "/calendar", label: "カレンダー", icon: CalendarDays },
+  { href: "/campaigns", label: "キャンペーン", icon: Megaphone },
   { href: "/accounts", label: "アカウント管理", icon: Users },
   { href: "/settings", label: "設定", icon: Settings },
 ];
