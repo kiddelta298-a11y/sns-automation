@@ -24,11 +24,11 @@ const SECTIONS: { title: string; icon: React.ComponentType<{ className?: string 
     icon: Bot,
     fields: [
       {
-        key: "anthropic_api_key",
-        label: "Anthropic APIキー",
-        description: "Claude APIの認証キー。トレンド分析・投稿生成に必要です。",
+        key: "gemini_api_key",
+        label: "Google Gemini APIキー",
+        description: "Gemini APIの認証キー（無料）。トレンド分析・投稿生成に必要です。Google AI Studio から取得できます。",
         type: "password",
-        placeholder: "sk-ant-...",
+        placeholder: "AIza...",
       },
     ],
   },

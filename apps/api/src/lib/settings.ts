@@ -3,7 +3,7 @@ import { db } from "../db/client.js";
 import { appSettings } from "../db/schema.js";
 
 export const SETTING_KEYS = {
-  ANTHROPIC_API_KEY:          "anthropic_api_key",
+  GEMINI_API_KEY:              "gemini_api_key",
   DEFAULT_COLLECTION_TARGET:  "default_collection_target",
   AUTO_ANALYZE_AFTER_COLLECT: "auto_analyze_after_collect",
   THREADS_HEADLESS:           "threads_headless",
@@ -31,9 +31,9 @@ export async function getAllSettings(): Promise<Record<string, string>> {
   const result: Record<string, string> = { ...SETTING_DEFAULTS };
   for (const row of rows) result[row.key] = row.value;
   // APIキーはマスク
-  if (result[SETTING_KEYS.ANTHROPIC_API_KEY]) {
-    const raw = result[SETTING_KEYS.ANTHROPIC_API_KEY];
-    result[SETTING_KEYS.ANTHROPIC_API_KEY] = raw.slice(0, 10) + "..." + raw.slice(-4);
+  if (result[SETTING_KEYS.GEMINI_API_KEY]) {
+    const raw = result[SETTING_KEYS.GEMINI_API_KEY];
+    result[SETTING_KEYS.GEMINI_API_KEY] = raw.slice(0, 10) + "..." + raw.slice(-4);
   }
   return result;
 }
@@ -43,8 +43,8 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .values({ key, value, updatedAt: new Date() })
     .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
 
-  // ANTHROPIC_API_KEY はプロセス環境変数にも即反映
-  if (key === SETTING_KEYS.ANTHROPIC_API_KEY) {
-    process.env.ANTHROPIC_API_KEY = value;
+  // GEMINI_API_KEY はプロセス環境変数にも即反映
+  if (key === SETTING_KEYS.GEMINI_API_KEY) {
+    process.env.GEMINI_API_KEY = value;
   }
 }

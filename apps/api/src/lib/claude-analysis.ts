@@ -1,14 +1,17 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { eq, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { trendPosts, winningPatterns, generatedDrafts } from "../db/schema.js";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+function getGemini() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+  const genAI = new GoogleGenerativeAI(apiKey);
+  return genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+}
 
 // ============================================================
-// バズスコア上位の投稿を取得してClaudeに分析させる
+// バズスコア上位の投稿を取得してGeminiに分析させる
 // ============================================================
 export async function runTrendAnalysis(jobId: string, sourceId: string) {
   // スコア上位100件を取得
@@ -20,7 +23,7 @@ export async function runTrendAnalysis(jobId: string, sourceId: string) {
 
   if (topPosts.length === 0) throw new Error("No posts found for analysis");
 
-  // Claude に渡す投稿サンプル（上位30件の本文）
+  // Gemini に渡す投稿サンプル（上位30件の本文）
   const samples = topPosts.slice(0, 30).map((p, i) => {
     const engRate = (p.engagementRate * 100).toFixed(2);
     return `[${i + 1}] バズスコア:${p.buzzScore.toFixed(3)} エンゲージ率:${engRate}% フォーマット:${p.postFormat ?? "不明"} 文字数:${p.charCount}\n${p.contentText}`;
@@ -85,15 +88,12 @@ ${Object.entries(charBands).map(([band, count]) => `- ${band}文字: ${count}件
 JSONのみ出力してください。
 `.trim();
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
-    max_tokens: 2000,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const model = getGemini();
+  const result = await model.generateContent(prompt);
+  const rawText = result.response.text();
 
-  const rawText = response.content[0].type === "text" ? response.content[0].text : "";
   const jsonMatch = rawText.match(/```json\s*([\s\S]*?)```/) ?? rawText.match(/(\{[\s\S]*\})/);
-  if (!jsonMatch) throw new Error("Claude did not return valid JSON");
+  if (!jsonMatch) throw new Error("Gemini did not return valid JSON");
 
   const analysisReport = JSON.parse(jsonMatch[1]);
 
@@ -192,15 +192,12 @@ ${count}件の投稿文案を以下のJSON形式で出力してください：
 - JSONのみ出力する
 `.trim();
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
-    max_tokens: 3000,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const model = getGemini();
+  const result = await model.generateContent(prompt);
+  const rawText = result.response.text();
 
-  const rawText = response.content[0].type === "text" ? response.content[0].text : "";
   const jsonMatch = rawText.match(/```json\s*([\s\S]*?)```/) ?? rawText.match(/(\[[\s\S]*\])/);
-  if (!jsonMatch) throw new Error("Claude did not return valid JSON");
+  if (!jsonMatch) throw new Error("Gemini did not return valid JSON");
 
   const generated: { contentText: string; postFormat: string; rationale: string }[] = JSON.parse(jsonMatch[1]);
 
