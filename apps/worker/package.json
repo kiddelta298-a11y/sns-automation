@@ -9,7 +9,6 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@sns-automation/shared": "workspace:*",
     "bullmq": "^5.34.0",
     "drizzle-orm": "^0.39.0",
     "ioredis": "^5.4.2",
