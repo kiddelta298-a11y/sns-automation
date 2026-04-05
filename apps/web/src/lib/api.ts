@@ -81,11 +81,28 @@ export function getAccounts() {
 export function createAccount(data: {
   platform: string;
   username: string;
+  displayName?: string;
   credentials: Record<string, string>;
 }) {
   return apiFetch<ApiAccount>("/api/accounts", {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export function updateAccount(id: string, data: {
+  displayName?: string;
+  status?: string;
+}) {
+  return apiFetch<ApiAccount>(`/api/accounts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteAccount(id: string) {
+  return apiFetch<{ success: boolean }>(`/api/accounts/${id}`, {
+    method: "DELETE",
   });
 }
 

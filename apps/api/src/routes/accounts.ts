@@ -53,3 +53,11 @@ accountsRouter.put("/:id", zValidator("json", updateAccountSchema), async (c) =>
   const { credentials, ...rest } = updated;
   return c.json(rest);
 });
+
+// DELETE /api/accounts/:id — アカウント削除
+accountsRouter.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  const [deleted] = await db.delete(accounts).where(eq(accounts.id, id)).returning();
+  if (!deleted) throw notFound("Account not found");
+  return c.json({ success: true });
+});
