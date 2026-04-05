@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { getAccounts, createPost, type ApiAccount } from "@/lib/api";
+import { getAccounts, createPost, uploadImage, type ApiAccount } from "@/lib/api";
 import type { Platform } from "@/types/post";
+import { ImagePlus, X } from "lucide-react";
 
 const platforms: { value: Platform; label: string }[] = [
   { value: "threads", label: "Threads" },
-  { value: "x", label: "X" },
   { value: "instagram", label: "Instagram" },
+  { value: "x", label: "X" },
 ];
 
 export default function NewPostPage() {
@@ -23,6 +24,12 @@ export default function NewPostPage() {
   const [accountId, setAccountId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Image upload state (Instagram)
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     getAccounts()
       .then((list) => {
@@ -32,10 +39,39 @@ export default function NewPostPage() {
       .catch(() => setAccounts([]));
   }, []);
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const uploads = await Promise.all(files.map((f) => uploadImage(f)));
+      setImageUrls((prev) => [...prev, ...uploads.map((u) => u.url)]);
+      setImagePreviews((prev) => [
+        ...prev,
+        ...files.map((f) => URL.createObjectURL(f)),
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "画像のアップロードに失敗しました");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setImageUrls((prev) => prev.filter((_, i) => i !== index));
+    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const handleSubmit = async (e: React.FormEvent, asDraft: boolean) => {
     e.preventDefault();
     if (!accountId) {
       setError("アカウントが登録されていません。先にアカウントを作成してください。");
+      return;
+    }
+    if (platform === "instagram" && imageUrls.length === 0 && !asDraft) {
+      setError("Instagramの投稿には画像が必要です。");
       return;
     }
     setSubmitting(true);
@@ -47,6 +83,9 @@ export default function NewPostPage() {
         contentText: content,
         linkUrl: linkUrl || undefined,
         status: asDraft ? "draft" : "scheduled",
+        metadata: platform === "instagram" && imageUrls.length > 0
+          ? { imagePaths: imageUrls }
+          : undefined,
       });
       router.push("/posts");
     } catch (err) {
@@ -135,6 +174,58 @@ export default function NewPostPage() {
               {content.length} / 500 文字
             </p>
           </div>
+
+          {/* 画像アップロード（Instagram専用） */}
+          {platform === "instagram" && (
+            <div>
+              <label className="mb-2 block text-sm font-medium text-foreground">
+                画像（最低1枚必須）
+              </label>
+              <div className="space-y-3">
+                {imagePreviews.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {imagePreviews.map((src, i) => (
+                      <div key={i} className="relative h-24 w-24">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={src}
+                          alt={`preview ${i + 1}`}
+                          className="h-24 w-24 rounded-lg object-cover border border-border"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeImage(i)}
+                          className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-white"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    multiple
+                    onChange={handleFileChange}
+                    className="hidden"
+                    id="image-upload"
+                  />
+                  <label
+                    htmlFor="image-upload"
+                    className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground ${
+                      uploading ? "pointer-events-none opacity-50" : ""
+                    }`}
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                    {uploading ? "アップロード中..." : "画像を選択"}
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div>
             <label

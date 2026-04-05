@@ -16,6 +16,7 @@ import { redirectorRouter } from "./routes/redirector.js";
 import { industriesRouter } from "./routes/industries.js";
 import { trendsRouter } from "./routes/trends.js";
 import { settingsRouter } from "./routes/settings.js";
+import { uploadsRouter, serveUpload } from "./routes/uploads.js";
 import { handleError } from "./lib/errors.js";
 
 const app = new Hono();
@@ -41,6 +42,21 @@ app.route("/api/settings", settingsRouter);
 
 // Redirector (short URL)
 app.route("/r", redirectorRouter);
+
+// Uploads API
+app.route("/api/uploads", uploadsRouter);
+
+// Static file serving for uploads
+app.get("/uploads/:filename", async (c) => {
+  const filename = c.req.param("filename");
+  // Prevent path traversal
+  if (filename.includes("..") || filename.includes("/")) {
+    return c.json({ error: "Invalid filename" }, 400);
+  }
+  const response = await serveUpload(filename);
+  if (!response) return c.json({ error: "Not found" }, 404);
+  return response;
+});
 
 // Start server
 const port = Number(process.env.PORT) || 3000;

@@ -65,6 +65,7 @@ export function createPost(data: {
   contentText: string;
   linkUrl?: string;
   status: string;
+  metadata?: Record<string, unknown>;
 }) {
   return apiFetch<ApiPost>("/api/posts", {
     method: "POST",
@@ -303,6 +304,20 @@ export interface ApiMetrics {
 
 export function getMetrics(jobId: string) {
   return apiFetch<ApiMetrics>(`/api/trends/metrics/${jobId}`);
+}
+
+// ---- Uploads ----
+
+export function uploadImage(file: File): Promise<{ url: string; filename: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  return fetch(`${API_BASE}/api/uploads`, { method: "POST", body: form }).then(async (res) => {
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { error?: string }).error ?? `Upload failed ${res.status}`);
+    }
+    return res.json();
+  });
 }
 
 // ---- Settings ----

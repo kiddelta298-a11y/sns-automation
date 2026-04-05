@@ -1,9 +1,46 @@
 import { Worker, Queue, type Job } from "bullmq";
+import { createWriteStream, mkdirSync } from "fs";
+import { tmpdir } from "os";
+import { join, extname } from "path";
+import { randomUUID } from "crypto";
 import {
   InstagramBrowser,
   type InstagramPostResult,
 } from "../browser/instagram.js";
 import { connection } from "./post-to-threads.js";
+
+/**
+ * URL の場合はローカルの一時ファイルにダウンロードして返す。
+ * ローカルパスの場合はそのまま返す。
+ */
+async function resolveImagePaths(paths: string[]): Promise<{ resolved: string[]; tmpFiles: string[] }> {
+  const tmpDir = join(tmpdir(), "sns-uploads");
+  mkdirSync(tmpDir, { recursive: true });
+  const resolved: string[] = [];
+  const tmpFiles: string[] = [];
+
+  for (const p of paths) {
+    if (p.startsWith("http://") || p.startsWith("https://")) {
+      const res = await fetch(p);
+      if (!res.ok) throw new Error(`Failed to download image: ${p}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const ext = extname(new URL(p).pathname) || ".jpg";
+      const tmpPath = join(tmpDir, `${randomUUID()}${ext}`);
+      await new Promise<void>((resolve, reject) => {
+        const ws = createWriteStream(tmpPath);
+        ws.write(buf, (err) => {
+          if (err) reject(err);
+          else { ws.end(); ws.on("finish", resolve); ws.on("error", reject); }
+        });
+      });
+      resolved.push(tmpPath);
+      tmpFiles.push(tmpPath);
+    } else {
+      resolved.push(p);
+    }
+  }
+  return { resolved, tmpFiles };
+}
 
 // ---------------------------------------------------------------
 // キュー定義
@@ -75,6 +112,8 @@ export function createInstagramPostWorker(): Worker<
         { headless: headless ?? true, proxy },
       );
 
+      const { resolved: resolvedPaths, tmpFiles } = await resolveImagePaths(imagePaths);
+
       try {
         // ブラウザ初期化
         await browser.init();
@@ -85,7 +124,7 @@ export function createInstagramPostWorker(): Worker<
         await job.updateProgress(50);
 
         // 投稿
-        const result = await browser.post({ caption, imagePaths });
+        const result = await browser.post({ caption, imagePaths: resolvedPaths });
         await job.updateProgress(90);
 
         if (!result.success) {
@@ -100,6 +139,10 @@ export function createInstagramPostWorker(): Worker<
         return { postId, result };
       } finally {
         await browser.close();
+        // 一時ファイルを削除
+        for (const f of tmpFiles) {
+          try { (await import("fs")).unlinkSync(f); } catch { /* ignore */ }
+        }
       }
     },
     {
