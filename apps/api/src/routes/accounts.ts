@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { accounts } from "../db/schema.js";
+import { accounts, posts, postMetrics } from "../db/schema.js";
 import { createAccountSchema, updateAccountSchema, paginationSchema } from "../lib/validators.js";
 import { notFound } from "../lib/errors.js";
 
@@ -60,4 +60,56 @@ accountsRouter.delete("/:id", async (c) => {
   const [deleted] = await db.delete(accounts).where(eq(accounts.id, id)).returning();
   if (!deleted) throw notFound("Account not found");
   return c.json({ success: true });
+});
+
+// GET /api/accounts/:id/metrics — アカウント別パフォーマンス集計
+accountsRouter.get("/:id/metrics", async (c) => {
+  const accountId = c.req.param("id");
+
+  const account = await db.query.accounts.findFirst({
+    where: eq(accounts.id, accountId),
+  });
+  if (!account) throw notFound("Account not found");
+  const { credentials, ...accountSafe } = account;
+
+  // 投稿集計: ステータス別件数
+  const postStats = await db.execute(sql`
+    SELECT
+      status,
+      COUNT(*) AS count
+    FROM posts
+    WHERE account_id = ${accountId}
+    GROUP BY status
+  `);
+
+  // メトリクス集計: 直近30日
+  const metricStats = await db.execute(sql`
+    SELECT
+      COALESCE(SUM(pm.likes), 0)          AS total_likes,
+      COALESCE(SUM(pm.reposts), 0)        AS total_reposts,
+      COALESCE(SUM(pm.replies), 0)        AS total_replies,
+      COALESCE(SUM(pm.views), 0)          AS total_views,
+      COALESCE(AVG(pm.likes), 0)          AS avg_likes,
+      COALESCE(AVG(pm.views), 0)          AS avg_views,
+      COUNT(DISTINCT p.id)                AS posts_with_metrics
+    FROM post_metrics pm
+    JOIN posts p ON p.id = pm.post_id
+    WHERE p.account_id = ${accountId}
+      AND pm.collected_at >= NOW() - INTERVAL '30 days'
+  `);
+
+  // 直近10件の投稿
+  const recentPosts = await db.query.posts.findMany({
+    where: eq(posts.accountId, accountId),
+    orderBy: (p, { desc }) => [desc(p.createdAt)],
+    limit: 10,
+    with: { postMetrics: { limit: 1, orderBy: (m, { desc }) => [desc(m.collectedAt)] } },
+  });
+
+  return c.json({
+    account: accountSafe,
+    postStats: postStats as unknown as { status: string; count: string }[],
+    metrics: metricStats[0] ?? {},
+    recentPosts,
+  });
 });

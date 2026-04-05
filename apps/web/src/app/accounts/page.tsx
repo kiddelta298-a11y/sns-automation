@@ -11,7 +11,8 @@ import {
   deleteAccount,
   type ApiAccount,
 } from "@/lib/api";
-import { PlusCircle, Trash2, PencilLine, X, Check } from "lucide-react";
+import Link from "next/link";
+import { PlusCircle, Trash2, PencilLine, X, Check, BarChart3 } from "lucide-react";
 
 const PLATFORMS = ["threads", "instagram", "x"] as const;
 type Platform = (typeof PLATFORMS)[number];
@@ -236,6 +237,11 @@ function AccountRow({
             </>
           ) : (
             <>
+              <Link href={`/accounts/${account.id}`}>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                  <BarChart3 className="h-4 w-4" />
+                </Button>
+              </Link>
               <Button size="sm" variant="ghost" onClick={() => setEditing(true)} className="h-7 w-7 p-0">
                 <PencilLine className="h-4 w-4" />
               </Button>

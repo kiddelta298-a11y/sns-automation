@@ -91,6 +91,25 @@ export function createAccount(data: {
   });
 }
 
+export interface ApiAccountMetrics {
+  account: ApiAccount;
+  postStats: { status: string; count: string }[];
+  metrics: {
+    total_likes?: number;
+    total_reposts?: number;
+    total_replies?: number;
+    total_views?: number;
+    avg_likes?: number;
+    avg_views?: number;
+    posts_with_metrics?: number;
+  };
+  recentPosts: (ApiPost & { postMetrics: ApiPostMetrics[] })[];
+}
+
+export function getAccountMetrics(id: string) {
+  return apiFetch<ApiAccountMetrics>(`/api/accounts/${id}/metrics`);
+}
+
 export function updateAccount(id: string, data: {
   displayName?: string;
   status?: string;
