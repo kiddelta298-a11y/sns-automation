@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
+import { eq, and, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { posts } from "../db/schema.js";
+import { posts, scheduledPosts } from "../db/schema.js";
 import { createPostSchema, updatePostSchema, paginationSchema } from "../lib/validators.js";
 import { notFound } from "../lib/errors.js";
 
@@ -80,4 +80,28 @@ postsRouter.delete("/:id", async (c) => {
   const [deleted] = await db.delete(posts).where(eq(posts.id, id)).returning();
   if (!deleted) throw notFound("Post not found");
   return c.json({ message: "Deleted" });
+});
+
+// GET /api/posts/calendar?from=ISO&to=ISO — カレンダー用予約投稿一覧
+postsRouter.get("/calendar", async (c) => {
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+
+  const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const toDate = to ? new Date(to) : new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+
+  const rows = await db.query.scheduledPosts.findMany({
+    where: and(
+      gte(scheduledPosts.scheduledAt, fromDate),
+      lte(scheduledPosts.scheduledAt, toDate),
+    ),
+    with: {
+      post: {
+        with: { account: true },
+      },
+    },
+    orderBy: (sp, { asc }) => [asc(sp.scheduledAt)],
+  });
+
+  return c.json(rows);
 });

@@ -107,6 +107,21 @@ export function deleteAccount(id: string) {
   });
 }
 
+export interface ApiScheduledPost {
+  id: string;
+  postId: string;
+  scheduledAt: string;
+  executedAt: string | null;
+  status: string;
+  retryCount: number | null;
+  errorMessage: string | null;
+  post: ApiPost & { account?: ApiAccount };
+}
+
+export function getCalendarPosts(from: string, to: string) {
+  return apiFetch<ApiScheduledPost[]>(`/api/posts/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+}
+
 export function updatePost(id: string, data: {
   contentText?: string;
   linkUrl?: string;
