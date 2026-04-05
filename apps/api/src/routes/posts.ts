@@ -64,9 +64,10 @@ postsRouter.get("/:id", async (c) => {
 postsRouter.put("/:id", zValidator("json", updatePostSchema), async (c) => {
   const id = c.req.param("id");
   const data = c.req.valid("json");
+  const { postedAt, ...rest } = data;
   const [updated] = await db
     .update(posts)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...rest, ...(postedAt ? { postedAt: new Date(postedAt) } : {}), updatedAt: new Date() })
     .where(eq(posts.id, id))
     .returning();
   if (!updated) throw notFound("Post not found");
