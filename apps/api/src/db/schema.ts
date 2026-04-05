@@ -322,6 +322,23 @@ export const appSettings = pgTable("app_settings", {
 });
 
 // ============================================================
+// keyword_sets（カスタムキーワードセット）
+// ============================================================
+export const keywordSets = pgTable("keyword_sets", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  keywords: jsonb("keywords").$type<string[]>().notNull().default([]),
+  minKeywordMatch: integer("min_keyword_match").notNull().default(1),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const keywordSetsRelations = relations(keywordSets, ({ many }) => ({
+  collectionJobs: many(collectionJobs),
+}));
+
+// ============================================================
 // industries（業界プリセット）
 // ============================================================
 export const industries = pgTable("industries", {
@@ -348,8 +365,9 @@ export const collectionJobs = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     industryId: uuid("industry_id")
-      .references(() => industries.id)
-      .notNull(),
+      .references(() => industries.id),
+    keywordSetId: uuid("keyword_set_id")
+      .references(() => keywordSets.id),
     status: varchar("status", { length: 20 }).default("pending").notNull(),
     // pending | running | completed | failed
     targetCount: integer("target_count").default(500).notNull(),
@@ -370,6 +388,10 @@ export const collectionJobsRelations = relations(collectionJobs, ({ one, many })
     fields: [collectionJobs.industryId],
     references: [industries.id],
   }),
+  keywordSet: one(keywordSets, {
+    fields: [collectionJobs.keywordSetId],
+    references: [keywordSets.id],
+  }),
   trendPosts: many(trendPosts),
   winningPatterns: many(winningPatterns),
   generatedDrafts: many(generatedDrafts),
@@ -386,8 +408,9 @@ export const trendPosts = pgTable(
       .references(() => collectionJobs.id)
       .notNull(),
     industryId: uuid("industry_id")
-      .references(() => industries.id)
-      .notNull(),
+      .references(() => industries.id),
+    keywordSetId: uuid("keyword_set_id")
+      .references(() => keywordSets.id),
     // 投稿者情報
     authorUsername: varchar("author_username", { length: 100 }),
     authorFollowers: integer("author_followers"),
@@ -440,8 +463,9 @@ export const winningPatterns = pgTable(
       .references(() => collectionJobs.id)
       .notNull(),
     industryId: uuid("industry_id")
-      .references(() => industries.id)
-      .notNull(),
+      .references(() => industries.id),
+    keywordSetId: uuid("keyword_set_id")
+      .references(() => keywordSets.id),
     // Claudeが生成した分析レポート（JSON構造化）
     analysisReport: jsonb("analysis_report").notNull(),
     // トップパターンのサマリー（テキスト）

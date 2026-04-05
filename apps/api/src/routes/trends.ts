@@ -202,7 +202,7 @@ trendsRouter.post("/analyze", zValidator("json", analyzeJobSchema), async (c) =>
   // analyzeTrendsQueue ではなく API内で直接実行（同期レスポンス）
   // 重い場合はキュー化も可能だが、ここでは直接Claudeを呼ぶ
   const { runTrendAnalysis } = await import("../lib/claude-analysis.js");
-  const pattern = await runTrendAnalysis(jobId, job.industryId);
+  const pattern = await runTrendAnalysis(jobId, job.industryId ?? job.keywordSetId ?? "");
 
   return c.json({ patternId: pattern.id, summary: pattern.summary });
 });

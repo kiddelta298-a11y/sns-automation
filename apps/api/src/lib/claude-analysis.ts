@@ -10,7 +10,7 @@ const anthropic = new Anthropic({
 // ============================================================
 // バズスコア上位の投稿を取得してClaudeに分析させる
 // ============================================================
-export async function runTrendAnalysis(jobId: string, industryId: string) {
+export async function runTrendAnalysis(jobId: string, sourceId: string) {
   // スコア上位100件を取得
   const topPosts = await db.query.trendPosts.findMany({
     where: eq(trendPosts.jobId, jobId),
@@ -106,7 +106,7 @@ JSONのみ出力してください。
 
   const [pattern] = await db.insert(winningPatterns).values({
     jobId,
-    industryId,
+    industryId: sourceId || null,
     analysisReport,
     summary: analysisReport.summary ?? "",
     formatDistribution: Object.fromEntries(formatStats.map(s => [s.format, parseInt(s.avgBuzz)])),

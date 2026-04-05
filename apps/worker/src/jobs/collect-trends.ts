@@ -20,7 +20,8 @@ export const connection = new IORedis(REDIS_URL, {
 // ============================================================
 const collectionJobs = pgTable("collection_jobs", {
   id: uuid("id").defaultRandom().primaryKey(),
-  industryId: uuid("industry_id").notNull(),
+  industryId: uuid("industry_id"),
+  keywordSetId: uuid("keyword_set_id"),
   status: varchar("status", { length: 20 }).default("pending").notNull(),
   targetCount: integer("target_count").default(500).notNull(),
   collectedCount: integer("collected_count").default(0).notNull(),
@@ -35,7 +36,8 @@ const trendPosts = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     jobId: uuid("job_id").notNull(),
-    industryId: uuid("industry_id").notNull(),
+    industryId: uuid("industry_id"),
+    keywordSetId: uuid("keyword_set_id"),
     authorUsername: varchar("author_username", { length: 100 }),
     authorFollowers: integer("author_followers"),
     contentText: text("content_text").notNull(),
@@ -53,7 +55,6 @@ const trendPosts = pgTable(
   },
   (t) => [
     index("idx_tp_job").on(t.jobId),
-    index("idx_tp_industry_buzz").on(t.industryId, t.buzzScore),
   ],
 );
 
@@ -62,9 +63,12 @@ const trendPosts = pgTable(
 // ============================================================
 export interface CollectTrendsJobData {
   jobId: string;
-  industryId: string;
+  industryId: string | null;
+  keywordSetId?: string | null;
   industrySlug: string;
   keywords: string[];
+  /** このうち何個以上のキーワードを含む投稿のみ残すか（デフォルト1=制限なし） */
+  minKeywordMatch?: number;
   targetCount: number;
   platforms?: ("threads" | "instagram")[];
   instagramCredentials?: { username: string; password: string };
@@ -79,7 +83,16 @@ export function createCollectTrendsWorker() {
   const worker = new Worker<CollectTrendsJobData>(
     "collect-trends",
     async (job: Job<CollectTrendsJobData>) => {
-      const { jobId, industryId, keywords, targetCount, platforms = ["threads"], instagramCredentials } = job.data;
+      const {
+        jobId,
+        industryId,
+        keywordSetId,
+        keywords,
+        minKeywordMatch = 1,
+        targetCount,
+        platforms = ["threads"],
+        instagramCredentials,
+      } = job.data;
 
       const sqlClient = postgres(process.env.DATABASE_URL ?? "");
       const db = drizzle(sqlClient, { schema: { collectionJobs, trendPosts } });
@@ -90,13 +103,26 @@ export function createCollectTrendsWorker() {
 
       const allPosts: TrendPostInsert[] = [];
 
+      /**
+       * 混在フィルタリング：
+       * minKeywordMatch >= 2 の場合、投稿本文に keywords のうち N 個以上含まれるもののみ通す
+       */
+      const passesKeywordFilter = (text: string): boolean => {
+        if (minKeywordMatch <= 1) return true;
+        const lower = text.toLowerCase();
+        const matchCount = keywords.filter(kw => lower.includes(kw.toLowerCase())).length;
+        return matchCount >= minKeywordMatch;
+      };
+
       const pushPost = (p: import("../browser/threads-scraper.js").ScrapedPost) => {
         if (!p.contentText.trim()) return;
+        if (!passesKeywordFilter(p.contentText)) return;
         if (allPosts.some(ap => (ap.contentText as string).slice(0, 50) === p.contentText.slice(0, 50))) return;
         const { buzzScore, engagementRate } = calcBuzzScore(p);
         allPosts.push({
           jobId,
-          industryId,
+          industryId: industryId ?? undefined,
+          keywordSetId: keywordSetId ?? undefined,
           authorUsername: p.authorUsername,
           authorFollowers: p.authorFollowers,
           contentText: p.contentText,
@@ -122,27 +148,32 @@ export function createCollectTrendsWorker() {
           try {
             await scraper.init();
 
-            const perKeyword = Math.ceil(targetCount * 0.6 / Math.max(keywords.length, 1));
-            const feedTarget = Math.ceil(targetCount * 0.4);
+            // キーワードセットモードでは全枠をキーワード検索に使う（フィード収集はしない）
+            const isKeywordSetMode = !!keywordSetId;
+            const keywordRatio = isKeywordSetMode ? 1.0 : 0.6;
+            const perKeyword = Math.ceil(targetCount * keywordRatio / Math.max(keywords.length, 1));
+            const feedTarget = isKeywordSetMode ? 0 : Math.ceil(targetCount * 0.4);
 
-            console.log(`[collect-trends:threads] jobId=${jobId} keywords=${keywords.length}`);
+            console.log(`[collect-trends:threads] jobId=${jobId} keywords=${keywords.length} minMatch=${minKeywordMatch}`);
 
             for (const keyword of keywords) {
               try {
                 const scraped = await scraper.scrapeByKeyword(keyword, perKeyword);
                 scraped.forEach(pushPost);
-                console.log(`[collect-trends:threads] keyword="${keyword}" scraped=${scraped.length}`);
+                console.log(`[collect-trends:threads] keyword="${keyword}" scraped=${scraped.length} passed=${allPosts.length}`);
               } catch (err) {
                 console.warn(`[collect-trends:threads] keyword="${keyword}" error:`, err);
               }
             }
 
-            try {
-              const feedPosts = await scraper.scrapeForYouFeed(feedTarget);
-              feedPosts.forEach(pushPost);
-              console.log(`[collect-trends:threads] forYouFeed scraped=${feedPosts.length}`);
-            } catch (err) {
-              console.warn("[collect-trends:threads] forYouFeed error:", err);
+            if (feedTarget > 0) {
+              try {
+                const feedPosts = await scraper.scrapeForYouFeed(feedTarget);
+                feedPosts.forEach(pushPost);
+                console.log(`[collect-trends:threads] forYouFeed scraped=${feedPosts.length}`);
+              } catch (err) {
+                console.warn("[collect-trends:threads] forYouFeed error:", err);
+              }
             }
           } finally {
             await scraper.close();

@@ -370,6 +370,75 @@ export function getMetrics(jobId: string) {
   return apiFetch<ApiMetrics>(`/api/trends/metrics/${jobId}`);
 }
 
+// ---- Keyword Sets ----
+
+export interface ApiKeywordSet {
+  id: string;
+  name: string;
+  keywords: string[];
+  minKeywordMatch: number;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiKeywordSetDetail extends ApiKeywordSet {
+  jobs: ApiCollectionJob[];
+}
+
+export function getKeywordSets() {
+  return apiFetch<ApiKeywordSet[]>("/api/keyword-sets");
+}
+
+export function getKeywordSet(id: string) {
+  return apiFetch<ApiKeywordSetDetail>(`/api/keyword-sets/${id}`);
+}
+
+export function createKeywordSet(data: {
+  name: string;
+  keywords: string[];
+  minKeywordMatch?: number;
+  description?: string;
+}) {
+  return apiFetch<ApiKeywordSet>("/api/keyword-sets", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateKeywordSet(id: string, data: {
+  name?: string;
+  keywords?: string[];
+  minKeywordMatch?: number;
+  description?: string;
+}) {
+  return apiFetch<ApiKeywordSet>(`/api/keyword-sets/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteKeywordSet(id: string) {
+  return apiFetch<{ success: boolean }>(`/api/keyword-sets/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function startKeywordCollection(id: string, targetCount = 200) {
+  return apiFetch<{ jobId: string; status: string }>(`/api/keyword-sets/${id}/collect`, {
+    method: "POST",
+    body: JSON.stringify({ targetCount }),
+  });
+}
+
+export function getKeywordSetJobs(id: string) {
+  return apiFetch<ApiCollectionJob[]>(`/api/keyword-sets/${id}/jobs`);
+}
+
+export function getKeywordSetJob(jobId: string) {
+  return apiFetch<ApiCollectionJob>(`/api/keyword-sets/jobs/${jobId}`);
+}
+
 // ---- Campaigns ----
 
 export interface ApiCampaign {

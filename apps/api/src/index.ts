@@ -18,6 +18,7 @@ import { trendsRouter } from "./routes/trends.js";
 import { settingsRouter } from "./routes/settings.js";
 import { uploadsRouter, serveUpload } from "./routes/uploads.js";
 import { campaignsRouter } from "./routes/campaigns.js";
+import { keywordSetsRouter } from "./routes/keyword-sets.js";
 import { handleError } from "./lib/errors.js";
 
 const app = new Hono();
@@ -46,6 +47,9 @@ app.route("/r", redirectorRouter);
 
 // Campaigns & UTM
 app.route("/api/campaigns", campaignsRouter);
+
+// Custom keyword sets
+app.route("/api/keyword-sets", keywordSetsRouter);
 
 // Uploads API
 app.route("/api/uploads", uploadsRouter);

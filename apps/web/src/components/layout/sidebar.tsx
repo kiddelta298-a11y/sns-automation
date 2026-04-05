@@ -14,6 +14,7 @@ import {
   Megaphone,
   AlertCircle,
   LogOut,
+  Tags,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getErrorPosts } from "@/lib/api";
@@ -21,6 +22,7 @@ import { getErrorPosts } from "@/lib/api";
 const navItems = [
   { href: "/", label: "ダッシュボード", icon: LayoutDashboard },
   { href: "/trends", label: "トレンド分析", icon: TrendingUp },
+  { href: "/keywords", label: "キーワード収集", icon: Tags },
   { href: "/posts", label: "投稿一覧", icon: FileText },
   { href: "/posts/new", label: "新規投稿", icon: PlusCircle },
   { href: "/calendar", label: "カレンダー", icon: CalendarDays },
