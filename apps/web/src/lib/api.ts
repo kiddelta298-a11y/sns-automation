@@ -424,10 +424,10 @@ export function deleteKeywordSet(id: string) {
   });
 }
 
-export function startKeywordCollection(id: string, targetCount = 200) {
+export function startKeywordCollection(id: string, targetCount = 200, periodDays = 7) {
   return apiFetch<{ jobId: string; status: string }>(`/api/keyword-sets/${id}/collect`, {
     method: "POST",
-    body: JSON.stringify({ targetCount }),
+    body: JSON.stringify({ targetCount, periodDays }),
   });
 }
 

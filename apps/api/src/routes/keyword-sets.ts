@@ -87,10 +87,13 @@ keywordSetsRouter.delete("/:id", async (c) => {
 // ============================================================
 keywordSetsRouter.post(
   "/:id/collect",
-  zValidator("json", z.object({ targetCount: z.number().int().min(50).max(2000).default(200) })),
+  zValidator("json", z.object({
+    targetCount: z.number().int().min(50).max(2000).default(200),
+    periodDays: z.number().int().min(0).max(365).default(7),
+  })),
   async (c) => {
     const id = c.req.param("id");
-    const { targetCount } = c.req.valid("json");
+    const { targetCount, periodDays } = c.req.valid("json");
 
     const ks = await db.query.keywordSets.findFirst({
       where: eq(keywordSets.id, id),
@@ -122,6 +125,7 @@ keywordSetsRouter.post(
       minKeywordMatch: ks.minKeywordMatch,
       targetCount,
       platforms: ["threads"],
+      periodDays,
     });
 
     return c.json({ jobId: job.id, status: "pending" }, 202);

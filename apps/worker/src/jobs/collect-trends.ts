@@ -72,6 +72,8 @@ export interface CollectTrendsJobData {
   targetCount: number;
   platforms?: ("threads" | "instagram")[];
   instagramCredentials?: { username: string; password: string };
+  /** 収集対象期間（日数）。0 または未指定で期間制限なし */
+  periodDays?: number;
 }
 
 type TrendPostInsert = typeof trendPosts.$inferInsert;
@@ -92,6 +94,7 @@ export function createCollectTrendsWorker() {
         targetCount,
         platforms = ["threads"],
         instagramCredentials,
+        periodDays = 0,
       } = job.data;
 
       const sqlClient = postgres(process.env.DATABASE_URL ?? "");
@@ -114,9 +117,21 @@ export function createCollectTrendsWorker() {
         return matchCount >= minKeywordMatch;
       };
 
+      /**
+       * 期間フィルタリング：
+       * periodDays > 0 の場合、postedAt が periodDays 日以内の投稿のみ通す
+       */
+      const sinceDate = periodDays > 0 ? new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000) : null;
+      const passesDateFilter = (postedAt: Date | null): boolean => {
+        if (!sinceDate) return true;
+        if (!postedAt) return true; // 日付不明は通す
+        return postedAt >= sinceDate;
+      };
+
       const pushPost = (p: import("../browser/threads-scraper.js").ScrapedPost) => {
         if (!p.contentText.trim()) return;
         if (!passesKeywordFilter(p.contentText)) return;
+        if (!passesDateFilter(p.postedAt)) return;
         if (allPosts.some(ap => (ap.contentText as string).slice(0, 50) === p.contentText.slice(0, 50))) return;
         const { buzzScore, engagementRate } = calcBuzzScore(p);
         allPosts.push({

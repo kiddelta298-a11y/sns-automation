@@ -189,6 +189,7 @@ export default function KeywordsPage() {
   const [targetCount, setTargetCount] = useState(200);
   const [minMatch, setMinMatch] = useState(1);
   const [draftCount, setDraftCount] = useState(3);
+  const [periodDays, setPeriodDays] = useState(7);
   const [seed, setSeed] = useState("");
 
   // ── 実行状態 ──
@@ -230,7 +231,7 @@ export default function KeywordsPage() {
   // ─────────────────────────────────────────────────
   // メインパイプライン
   // ─────────────────────────────────────────────────
-  const runPipeline = useCallback(async (kws: string[], target: number, min: number, count: number, seedText: string) => {
+  const runPipeline = useCallback(async (kws: string[], target: number, min: number, count: number, period: number, seedText: string) => {
     if (kws.length === 0) return;
     setPhase("collecting");
     setErrorMsg(null);
@@ -246,7 +247,7 @@ export default function KeywordsPage() {
       setSavedSets(prev => [ks, ...prev]);
 
       // ② 収集開始
-      const { jobId } = await startKeywordCollection(ks.id, target);
+      const { jobId } = await startKeywordCollection(ks.id, target, period);
 
       // ③ 収集完了をポーリング待機
       const job = await new Promise<ApiCollectionJob>((resolve, reject) => {
@@ -344,7 +345,27 @@ export default function KeywordsPage() {
         </div>
 
         {/* 設定行 */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">収集期間</label>
+            <select value={periodDays} onChange={(e) => setPeriodDays(Number(e.target.value))} disabled={isRunning}
+              className="w-full rounded-lg border border-border bg-background px-2 py-2 text-sm focus:border-primary focus:outline-none">
+              <option value={1}>24時間以内（急上昇）</option>
+              <option value={3}>3日以内</option>
+              <option value={7}>1週間以内（推奨）</option>
+              <option value={14}>2週間以内</option>
+              <option value={30}>1ヶ月以内</option>
+              <option value={0}>制限なし</option>
+            </select>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {periodDays === 1 && "急上昇中のバズ投稿を狙う"}
+              {periodDays === 3 && "直近のトレンドを優先"}
+              {periodDays === 7 && "週次トレンドを捉える（バランス良）"}
+              {periodDays === 14 && "やや広めのトレンドも含む"}
+              {periodDays === 30 && "月次トレンドまで含む"}
+              {periodDays === 0 && "投稿日時によるフィルタなし"}
+            </p>
+          </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">収集件数</label>
             <select value={targetCount} onChange={(e) => setTargetCount(Number(e.target.value))} disabled={isRunning}
@@ -393,7 +414,7 @@ export default function KeywordsPage() {
 
         {/* 実行ボタン */}
         <button
-          onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, seed)}
+          onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, periodDays, seed)}
           disabled={isRunning || keywords.length === 0}
           className={cn(
             "w-full flex items-center justify-center gap-2 rounded-xl py-3 text-base font-bold transition-all",
@@ -470,7 +491,7 @@ export default function KeywordsPage() {
             <div className="flex items-center gap-2">
               {/* 再生成ボタン */}
               <button
-                onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, seed)}
+                onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, periodDays, seed)}
                 className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
                 <RotateCcw className="h-3.5 w-3.5" /> 再実行
               </button>
