@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   getIndustries, seedIndustries, startCollection, getCollectionJob, getCollectionJobs,
-  type ApiIndustry, type ApiCollectionJob,
+  getAccounts,
+  type ApiIndustry, type ApiCollectionJob, type ApiAccount,
 } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,20 @@ export default function TrendsPage() {
   const [activeJob, setActiveJob] = useState<ApiCollectionJob | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Platform selection
+  const [platforms, setPlatforms] = useState<("threads" | "instagram")[]>(["threads"]);
+  const [igAccounts, setIgAccounts] = useState<ApiAccount[]>([]);
+  const [igAccountId, setIgAccountId] = useState<string>("");
+
+  // Instagramアカウント読み込み
+  useEffect(() => {
+    getAccounts().then((list) => {
+      const ig = list.filter((a) => a.platform === "instagram");
+      setIgAccounts(ig);
+      if (ig.length > 0) setIgAccountId(ig[0].id);
+    }).catch(() => {});
+  }, []);
+
   // 業界読み込み
   useEffect(() => {
     (async () => {
@@ -97,11 +112,28 @@ export default function TrendsPage() {
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, [activeJobId, loadJobs]);
 
+  const togglePlatform = (p: "threads" | "instagram") => {
+    setPlatforms((prev) =>
+      prev.includes(p)
+        ? prev.filter((x) => x !== p).length === 0 ? prev : prev.filter((x) => x !== p)
+        : [...prev, p],
+    );
+  };
+
   const handleStart = async () => {
     if (!selected || collecting) return;
+    if (platforms.includes("instagram") && !igAccountId) {
+      alert("Instagramの収集にはInstagramアカウントが必要です。先にアカウントを追加してください。");
+      return;
+    }
     setCollecting(true);
     try {
-      const { jobId } = await startCollection(selected.id, 500);
+      const { jobId } = await startCollection(
+        selected.id,
+        500,
+        platforms,
+        platforms.includes("instagram") ? igAccountId : undefined,
+      );
       setActiveJobId(jobId);
       await loadJobs();
     } catch (err) {
@@ -191,10 +223,58 @@ export default function TrendsPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   目標収集数：<strong className="text-foreground">500件</strong>
-                  推定所要時間：<strong className="text-foreground">
+                  {" "}推定所要時間：<strong className="text-foreground">
                     {formatDuration(estimateSeconds(selected.keywords as string[], 500))}
                   </strong>
                 </p>
+
+                {/* プラットフォーム選択 */}
+                <div className="pt-1">
+                  <p className="mb-1.5 text-xs font-medium text-muted-foreground">収集プラットフォーム</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(["threads", "instagram"] as const).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        disabled={isRunning}
+                        onClick={() => togglePlatform(p)}
+                        className={cn(
+                          "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                          platforms.includes(p)
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border text-muted-foreground hover:border-primary/50",
+                        )}
+                      >
+                        {p === "threads" ? "Threads" : "Instagram"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Instagram アカウント選択 */}
+                {platforms.includes("instagram") && (
+                  <div className="pt-1">
+                    {igAccounts.length === 0 ? (
+                      <p className="text-xs text-destructive">
+                        Instagramアカウントが未登録です。
+                        <a href="/accounts" className="ml-1 underline">アカウント管理</a>から追加してください。
+                      </p>
+                    ) : (
+                      <div>
+                        <p className="mb-1 text-xs font-medium text-muted-foreground">Instagramアカウント</p>
+                        <select
+                          value={igAccountId}
+                          onChange={(e) => setIgAccountId(e.target.value)}
+                          className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                        >
+                          {igAccounts.map((a) => (
+                            <option key={a.id} value={a.id}>@{a.username}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <button
                 onClick={handleStart}
@@ -242,7 +322,7 @@ export default function TrendsPage() {
                 <span className="font-semibold text-foreground">
                   {activeJob.status === "completed" ? "収集完了！"
                    : activeJob.status === "failed" ? "収集失敗"
-                   : activeJob.status === "running" ? "Threadsからデータを収集中..."
+                   : activeJob.status === "running" ? "SNSからデータを収集中..."
                    : "開始待機中..."}
                 </span>
               </div>

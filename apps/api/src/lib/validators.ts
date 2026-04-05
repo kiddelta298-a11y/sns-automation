@@ -96,6 +96,8 @@ export const createIndustrySchema = z.object({
 export const startCollectionSchema = z.object({
   industryId: z.string().uuid(),
   targetCount: z.number().int().min(100).max(2000).default(500),
+  platforms: z.array(z.enum(["threads", "instagram"])).min(1).default(["threads"]),
+  instagramAccountId: z.string().uuid().optional(),
 });
 
 export const trendRankingQuerySchema = z.object({

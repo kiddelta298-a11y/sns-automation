@@ -7,6 +7,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { eq, sql } from "drizzle-orm";
 import { ThreadsScraper, calcBuzzScore, classifyPostFormat } from "../browser/threads-scraper.js";
+import { InstagramScraper } from "../browser/instagram-scraper.js";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
@@ -65,6 +66,8 @@ export interface CollectTrendsJobData {
   industrySlug: string;
   keywords: string[];
   targetCount: number;
+  platforms?: ("threads" | "instagram")[];
+  instagramCredentials?: { username: string; password: string };
 }
 
 type TrendPostInsert = typeof trendPosts.$inferInsert;
@@ -76,7 +79,7 @@ export function createCollectTrendsWorker() {
   const worker = new Worker<CollectTrendsJobData>(
     "collect-trends",
     async (job: Job<CollectTrendsJobData>) => {
-      const { jobId, industryId, keywords, targetCount } = job.data;
+      const { jobId, industryId, keywords, targetCount, platforms = ["threads"], instagramCredentials } = job.data;
 
       const sqlClient = postgres(process.env.DATABASE_URL ?? "");
       const db = drizzle(sqlClient, { schema: { collectionJobs, trendPosts } });
@@ -85,84 +88,117 @@ export function createCollectTrendsWorker() {
         .set({ status: "running", startedAt: new Date() })
         .where(eq(collectionJobs.id, jobId));
 
-      const scraper = new ThreadsScraper({ headless: true });
       const allPosts: TrendPostInsert[] = [];
 
+      const pushPost = (p: import("../browser/threads-scraper.js").ScrapedPost) => {
+        if (!p.contentText.trim()) return;
+        if (allPosts.some(ap => (ap.contentText as string).slice(0, 50) === p.contentText.slice(0, 50))) return;
+        const { buzzScore, engagementRate } = calcBuzzScore(p);
+        allPosts.push({
+          jobId,
+          industryId,
+          authorUsername: p.authorUsername,
+          authorFollowers: p.authorFollowers,
+          contentText: p.contentText,
+          hasImage: p.hasImage,
+          likeCount: p.likeCount,
+          repostCount: p.repostCount,
+          replyCount: p.replyCount,
+          viewCount: p.viewCount,
+          buzzScore,
+          engagementRate,
+          postFormat: classifyPostFormat(p.contentText),
+          charCount: p.contentText.length,
+          postedAt: p.postedAt,
+        });
+      };
+
       try {
-        await scraper.init();
-
-        const perKeyword = Math.ceil(targetCount * 0.6 / Math.max(keywords.length, 1));
-        const feedTarget = Math.ceil(targetCount * 0.4);
-
-        console.log(`[collect-trends] jobId=${jobId} keywords=${keywords.length} perKeyword=${perKeyword}`);
-
-        // キーワード別収集
-        for (const keyword of keywords) {
+        // ============================================================
+        // Threads 収集
+        // ============================================================
+        if (platforms.includes("threads")) {
+          const scraper = new ThreadsScraper({ headless: true });
           try {
-            const scraped = await scraper.scrapeByKeyword(keyword, perKeyword);
-            console.log(`[collect-trends] keyword="${keyword}" scraped=${scraped.length}`);
+            await scraper.init();
 
-            for (const p of scraped) {
-              if (!p.contentText.trim()) continue;
-              const { buzzScore, engagementRate } = calcBuzzScore(p);
-              allPosts.push({
-                jobId,
-                industryId,
-                authorUsername: p.authorUsername,
-                authorFollowers: p.authorFollowers,
-                contentText: p.contentText,
-                hasImage: p.hasImage,
-                likeCount: p.likeCount,
-                repostCount: p.repostCount,
-                replyCount: p.replyCount,
-                viewCount: p.viewCount,
-                buzzScore,
-                engagementRate,
-                postFormat: classifyPostFormat(p.contentText),
-                charCount: p.contentText.length,
-                postedAt: p.postedAt,
-              });
+            const perKeyword = Math.ceil(targetCount * 0.6 / Math.max(keywords.length, 1));
+            const feedTarget = Math.ceil(targetCount * 0.4);
+
+            console.log(`[collect-trends:threads] jobId=${jobId} keywords=${keywords.length}`);
+
+            for (const keyword of keywords) {
+              try {
+                const scraped = await scraper.scrapeByKeyword(keyword, perKeyword);
+                scraped.forEach(pushPost);
+                console.log(`[collect-trends:threads] keyword="${keyword}" scraped=${scraped.length}`);
+              } catch (err) {
+                console.warn(`[collect-trends:threads] keyword="${keyword}" error:`, err);
+              }
             }
 
-            await db.update(collectionJobs)
-              .set({ collectedCount: allPosts.length })
-              .where(eq(collectionJobs.id, jobId));
-
-          } catch (err) {
-            console.warn(`[collect-trends] keyword="${keyword}" error:`, err);
+            try {
+              const feedPosts = await scraper.scrapeForYouFeed(feedTarget);
+              feedPosts.forEach(pushPost);
+              console.log(`[collect-trends:threads] forYouFeed scraped=${feedPosts.length}`);
+            } catch (err) {
+              console.warn("[collect-trends:threads] forYouFeed error:", err);
+            }
+          } finally {
+            await scraper.close();
           }
+
+          await db.update(collectionJobs)
+            .set({ collectedCount: allPosts.length })
+            .where(eq(collectionJobs.id, jobId));
         }
 
-        // おすすめフィード収集
-        try {
-          const feedPosts = await scraper.scrapeForYouFeed(feedTarget);
-          console.log(`[collect-trends] forYouFeed scraped=${feedPosts.length}`);
+        // ============================================================
+        // Instagram 収集
+        // ============================================================
+        if (platforms.includes("instagram") && instagramCredentials) {
+          const igScraper = new InstagramScraper({ headless: true });
+          try {
+            await igScraper.init();
+            const loggedIn = await igScraper.login(
+              instagramCredentials.username,
+              instagramCredentials.password,
+            );
 
-          for (const p of feedPosts) {
-            if (!p.contentText.trim()) continue;
-            if (allPosts.some(ap => ap.contentText === p.contentText)) continue;
+            if (!loggedIn) {
+              console.warn("[collect-trends:instagram] login failed, skipping Instagram collection");
+            } else {
+              const igTarget = Math.ceil(targetCount * 0.5);
+              const perHashtag = Math.ceil(igTarget * 0.6 / Math.max(keywords.length, 1));
+              const exploreTarget = Math.ceil(igTarget * 0.4);
 
-            const { buzzScore, engagementRate } = calcBuzzScore(p);
-            allPosts.push({
-              jobId,
-              industryId,
-              authorUsername: p.authorUsername,
-              authorFollowers: p.authorFollowers,
-              contentText: p.contentText,
-              hasImage: p.hasImage,
-              likeCount: p.likeCount,
-              repostCount: p.repostCount,
-              replyCount: p.replyCount,
-              viewCount: p.viewCount,
-              buzzScore,
-              engagementRate,
-              postFormat: classifyPostFormat(p.contentText),
-              charCount: p.contentText.length,
-              postedAt: p.postedAt,
-            });
+              console.log(`[collect-trends:instagram] jobId=${jobId} hashtags=${keywords.length}`);
+
+              for (const keyword of keywords) {
+                try {
+                  const scraped = await igScraper.scrapeByHashtag(keyword, perHashtag);
+                  scraped.forEach(pushPost);
+                  console.log(`[collect-trends:instagram] hashtag="${keyword}" scraped=${scraped.length}`);
+                } catch (err) {
+                  console.warn(`[collect-trends:instagram] hashtag="${keyword}" error:`, err);
+                }
+              }
+
+              try {
+                const explorePosts = await igScraper.scrapeExploreFeed(exploreTarget);
+                explorePosts.forEach(pushPost);
+                console.log(`[collect-trends:instagram] explore scraped=${explorePosts.length}`);
+              } catch (err) {
+                console.warn("[collect-trends:instagram] explore error:", err);
+              }
+
+              await db.update(collectionJobs)
+                .set({ collectedCount: allPosts.length })
+                .where(eq(collectionJobs.id, jobId));
+            }
+          } finally {
+            await igScraper.close();
           }
-        } catch (err) {
-          console.warn("[collect-trends] forYouFeed error:", err);
         }
 
         // 重複除去・バルクinsert
@@ -188,7 +224,6 @@ export function createCollectTrendsWorker() {
           .where(eq(collectionJobs.id, jobId));
         throw err;
       } finally {
-        await scraper.close();
         await sqlClient.end();
       }
     },

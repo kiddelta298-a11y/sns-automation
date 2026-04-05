@@ -27,12 +27,27 @@ export const trendsRouter = new Hono();
 // POST /api/trends/collect — 収集ジョブ開始
 // ============================================================
 trendsRouter.post("/collect", zValidator("json", startCollectionSchema), async (c) => {
-  const { industryId, targetCount } = c.req.valid("json");
+  const { industryId, targetCount, platforms, instagramAccountId } = c.req.valid("json");
 
   const industry = await db.query.industries.findFirst({
     where: eq(industries.id, industryId),
   });
   if (!industry) return c.json({ error: "Industry not found" }, 404);
+
+  // Instagram 収集にはアカウントが必要
+  if (platforms.includes("instagram") && !instagramAccountId) {
+    return c.json({ error: "Instagram収集にはinstagramAccountIdが必要です" }, 400);
+  }
+
+  let instagramCredentials: { username: string; password: string } | undefined;
+  if (instagramAccountId) {
+    const account = await db.query.accounts.findFirst({
+      where: eq(accounts.id, instagramAccountId),
+    });
+    if (!account) return c.json({ error: "Account not found" }, 404);
+    const creds = account.credentials as Record<string, string>;
+    instagramCredentials = { username: account.username, password: creds.password ?? "" };
+  }
 
   // 既に実行中のジョブがあればブロック
   const running = await db.query.collectionJobs.findFirst({
@@ -58,6 +73,8 @@ trendsRouter.post("/collect", zValidator("json", startCollectionSchema), async (
     industrySlug: industry.slug,
     keywords: industry.keywords as string[],
     targetCount,
+    platforms,
+    instagramCredentials,
   });
 
   return c.json({ jobId: job.id, status: "pending" }, 202);

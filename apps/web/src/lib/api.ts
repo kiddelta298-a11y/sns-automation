@@ -225,10 +225,15 @@ export interface ApiGeneratedDraft {
   createdAt: string;
 }
 
-export function startCollection(industryId: string, targetCount = 500) {
+export function startCollection(
+  industryId: string,
+  targetCount = 500,
+  platforms: ("threads" | "instagram")[] = ["threads"],
+  instagramAccountId?: string,
+) {
   return apiFetch<{ jobId: string; status: string }>("/api/trends/collect", {
     method: "POST",
-    body: JSON.stringify({ industryId, targetCount }),
+    body: JSON.stringify({ industryId, targetCount, platforms, instagramAccountId }),
   });
 }
 
