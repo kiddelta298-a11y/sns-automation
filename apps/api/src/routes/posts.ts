@@ -82,6 +82,43 @@ postsRouter.delete("/:id", async (c) => {
   return c.json({ message: "Deleted" });
 });
 
+// GET /api/posts/errors — 失敗した投稿の一覧
+postsRouter.get("/errors", async (c) => {
+  const rows = await db.query.scheduledPosts.findMany({
+    where: (sp, { eq }) => eq(sp.status, "failed"),
+    with: {
+      post: {
+        with: { account: true },
+      },
+    },
+    orderBy: (sp, { desc }) => [desc(sp.scheduledAt)],
+    limit: 50,
+  });
+  return c.json(rows);
+});
+
+// POST /api/posts/:id/retry — 失敗した予約投稿をリトライ
+postsRouter.post("/:id/retry", async (c) => {
+  const id = c.req.param("id");
+  const sp = await db.query.scheduledPosts.findFirst({
+    where: (s, { eq }) => eq(s.postId, id),
+  });
+  if (!sp) throw notFound("Scheduled post not found");
+
+  // ステータスをpendingに戻す（スケジューラーが次回ピックアップ）
+  await db
+    .update(scheduledPosts)
+    .set({ status: "pending", retryCount: 0, errorMessage: null })
+    .where(eq(scheduledPosts.postId, id));
+
+  await db
+    .update(posts)
+    .set({ status: "scheduled" })
+    .where(eq(posts.id, id));
+
+  return c.json({ success: true });
+});
+
 // GET /api/posts/calendar?from=ISO&to=ISO — カレンダー用予約投稿一覧
 postsRouter.get("/calendar", async (c) => {
   const from = c.req.query("from");

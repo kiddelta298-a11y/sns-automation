@@ -118,6 +118,14 @@ export interface ApiScheduledPost {
   post: ApiPost & { account?: ApiAccount };
 }
 
+export function getErrorPosts() {
+  return apiFetch<ApiScheduledPost[]>("/api/posts/errors");
+}
+
+export function retryPost(postId: string) {
+  return apiFetch<{ success: boolean }>(`/api/posts/${postId}/retry`, { method: "POST" });
+}
+
 export function getCalendarPosts(from: string, to: string) {
   return apiFetch<ApiScheduledPost[]>(`/api/posts/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
 }

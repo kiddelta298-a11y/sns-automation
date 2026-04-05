@@ -12,8 +12,11 @@ import {
   Users,
   CalendarDays,
   Megaphone,
+  AlertCircle,
   LogOut,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { getErrorPosts } from "@/lib/api";
 
 const navItems = [
   { href: "/", label: "ダッシュボード", icon: LayoutDashboard },
@@ -22,6 +25,7 @@ const navItems = [
   { href: "/posts/new", label: "新規投稿", icon: PlusCircle },
   { href: "/calendar", label: "カレンダー", icon: CalendarDays },
   { href: "/campaigns", label: "キャンペーン", icon: Megaphone },
+  { href: "/errors", label: "エラー通知", icon: AlertCircle },
   { href: "/accounts", label: "アカウント管理", icon: Users },
   { href: "/settings", label: "設定", icon: Settings },
 ];
@@ -29,6 +33,18 @@ const navItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [errorCount, setErrorCount] = useState(0);
+
+  useEffect(() => {
+    getErrorPosts()
+      .then((errors) => setErrorCount(errors.length))
+      .catch(() => {});
+    // Refresh every 2 minutes
+    const t = setInterval(() => {
+      getErrorPosts().then((errors) => setErrorCount(errors.length)).catch(() => {});
+    }, 120_000);
+    return () => clearInterval(t);
+  }, []);
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -62,6 +78,11 @@ export function Sidebar() {
             >
               <item.icon className="h-5 w-5" />
               {item.label}
+              {item.href === "/errors" && errorCount > 0 && (
+                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                  {errorCount > 99 ? "99+" : errorCount}
+                </span>
+              )}
             </Link>
           );
         })}
