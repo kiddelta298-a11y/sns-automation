@@ -90,10 +90,11 @@ keywordSetsRouter.post(
   zValidator("json", z.object({
     targetCount: z.number().int().min(50).max(2000).default(200),
     periodDays: z.number().int().min(0).max(365).default(7),
+    collectImages: z.boolean().default(false),
   })),
   async (c) => {
     const id = c.req.param("id");
-    const { targetCount, periodDays } = c.req.valid("json");
+    const { targetCount, periodDays, collectImages } = c.req.valid("json");
 
     const ks = await db.query.keywordSets.findFirst({
       where: eq(keywordSets.id, id),
@@ -126,6 +127,7 @@ keywordSetsRouter.post(
       targetCount,
       platforms: ["threads"],
       periodDays,
+      collectImages,
     });
 
     return c.json({ jobId: job.id, status: "pending" }, 202);

@@ -3,6 +3,8 @@ import { createThreadsPostWorker } from "./jobs/post-to-threads.js";
 import { createInstagramPostWorker } from "./jobs/post-to-instagram.js";
 import { createCollectTrendsWorker } from "./jobs/collect-trends.js";
 import { startScheduleExecutor } from "./jobs/schedule-executor.js";
+import { createAnalyzeGenreWorker } from "./jobs/analyze-genre.js";
+import { createMonitorAccountsWorker } from "./jobs/monitor-accounts.js";
 
 async function main(): Promise<void> {
   console.log("[worker] Starting SNS Automation Worker...");
@@ -40,6 +42,14 @@ async function main(): Promise<void> {
   const schedulerTimer = startScheduleExecutor();
   console.log("[worker] Schedule executor started");
 
+  // ジャンル別リサーチ分析ワーカーを起動
+  const analyzeGenreWorker = createAnalyzeGenreWorker();
+  console.log("[worker] Analyze genre worker started");
+
+  // 参考アカウント定期監視ワーカーを起動
+  const monitorAccountsWorker = createMonitorAccountsWorker();
+  console.log("[worker] Monitor accounts worker started");
+
   // グレースフルシャットダウン
   const shutdown = async (signal: string) => {
     console.log(`[worker] Received ${signal}, shutting down...`);
@@ -48,6 +58,8 @@ async function main(): Promise<void> {
       threadsWorker.close(),
       instagramWorker.close(),
       collectTrendsWorker.close(),
+      analyzeGenreWorker.close(),
+      monitorAccountsWorker.close(),
     ]);
     process.exit(0);
   };

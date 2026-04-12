@@ -222,11 +222,13 @@ export class InstagramScraper {
         authorFollowers: null,
         contentText: data.contentText,
         hasImage: data.hasImage,
+        imageUrls: [],
         likeCount: data.likeCount,
         repostCount: 0, // Instagram はリポスト数非公開
         replyCount: 0,
         viewCount: 0,
         postedAt: data.postedAt ? new Date(data.postedAt) : null,
+        platformPostId: url, // Instagram投稿URLをIDとして使用
       };
     } catch (err) {
       console.warn(`[instagram-scraper] post detail error (${url}):`, err);

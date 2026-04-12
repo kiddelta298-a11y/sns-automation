@@ -8,6 +8,7 @@ import {
 import { eq, sql } from "drizzle-orm";
 import { ThreadsScraper, calcBuzzScore, classifyPostFormat } from "../browser/threads-scraper.js";
 import { InstagramScraper } from "../browser/instagram-scraper.js";
+import { collectImages } from "./image-collector.js";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
@@ -31,6 +32,26 @@ const collectionJobs = pgTable("collection_jobs", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+const collectedImages = pgTable(
+  "collected_images",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: uuid("job_id").notNull(),
+    keywordSetId: uuid("keyword_set_id"),
+    keyword: varchar("keyword", { length: 200 }),
+    authorUsername: varchar("author_username", { length: 100 }),
+    contentText: text("content_text"),
+    imageUrl: text("image_url").notNull(),
+    localPath: varchar("local_path", { length: 500 }),
+    likeCount: integer("like_count").default(0),
+    buzzScore: real("buzz_score").default(0),
+    analysisText: text("analysis_text"),
+    analyzedAt: timestamp("analyzed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("idx_ci_job").on(t.jobId)],
+);
+
 const trendPosts = pgTable(
   "trend_posts",
   {
@@ -50,6 +71,7 @@ const trendPosts = pgTable(
     engagementRate: real("engagement_rate").default(0).notNull(),
     postFormat: varchar("post_format", { length: 30 }),
     charCount: integer("char_count").default(0).notNull(),
+    platformPostId: varchar("platform_post_id", { length: 300 }),
     postedAt: timestamp("posted_at"),
     collectedAt: timestamp("collected_at").defaultNow().notNull(),
   },
@@ -74,6 +96,8 @@ export interface CollectTrendsJobData {
   instagramCredentials?: { username: string; password: string };
   /** 収集対象期間（日数）。0 または未指定で期間制限なし */
   periodDays?: number;
+  /** バズ画像を収集してGemini Visionで分析するか */
+  collectImages?: boolean;
 }
 
 type TrendPostInsert = typeof trendPosts.$inferInsert;
@@ -95,16 +119,50 @@ export function createCollectTrendsWorker() {
         platforms = ["threads"],
         instagramCredentials,
         periodDays = 0,
+        collectImages: shouldCollectImages = false,
       } = job.data;
 
       const sqlClient = postgres(process.env.DATABASE_URL ?? "");
-      const db = drizzle(sqlClient, { schema: { collectionJobs, trendPosts } });
+      const db = drizzle(sqlClient, { schema: { collectionJobs, trendPosts, collectedImages } });
+
+      // 進捗メッセージをDBに保存してSSEで配信
+      const updateProgress = async (message: string, count?: number) => {
+        console.log(`[collect-trends] ${message}`);
+        await db.update(collectionJobs)
+          .set({
+            ...(count !== undefined ? { collectedCount: count } : {}),
+            errorMessage: null, // 進捗メッセージとして流用（running中はエラーではない）
+          })
+          .where(eq(collectionJobs.id, jobId))
+          .catch(() => {}); // 進捗更新失敗は無視
+        // BullMQ job progress（数値）
+        await job.updateProgress(count ?? allPosts.length).catch(() => {});
+      };
+
+      // currentStatus を collection_jobs の metadata 的なカラムに格納
+      // errorMessage カラムを running 中は「進捗メッセージ」として流用
+      const setStatusMsg = async (msg: string) => {
+        await db.update(collectionJobs)
+          .set({ errorMessage: msg })
+          .where(eq(collectionJobs.id, jobId))
+          .catch(() => {});
+      };
 
       await db.update(collectionJobs)
-        .set({ status: "running", startedAt: new Date() })
+        .set({ status: "running", startedAt: new Date(), errorMessage: "初期化中..." })
         .where(eq(collectionJobs.id, jobId));
 
       const allPosts: TrendPostInsert[] = [];
+      // 画像収集用：imageUrls を持つ投稿を別途保持
+      const imageQueue: {
+        keyword: string;
+        authorUsername: string | null;
+        contentText: string;
+        imageUrls: string[];
+        likeCount: number;
+        buzzScore: number;
+      }[] = [];
+      let currentKeyword = "";
 
       /**
        * 混在フィルタリング：
@@ -150,8 +208,20 @@ export function createCollectTrendsWorker() {
           engagementRate,
           postFormat: classifyPostFormat(p.contentText),
           charCount: p.contentText.length,
+          platformPostId: p.platformPostId ?? null,
           postedAt: p.postedAt,
         });
+        // 画像付き投稿を画像キューに追加
+        if (shouldCollectImages && p.imageUrls.length > 0) {
+          imageQueue.push({
+            keyword: currentKeyword,
+            authorUsername: p.authorUsername,
+            contentText: p.contentText,
+            imageUrls: p.imageUrls,
+            likeCount: p.likeCount,
+            buzzScore,
+          });
+        }
       };
 
       try {
@@ -159,9 +229,25 @@ export function createCollectTrendsWorker() {
         // Threads 収集
         // ============================================================
         if (platforms.includes("threads")) {
-          const scraper = new ThreadsScraper({ headless: true });
+          // Threads ログイン（env から認証情報を取得）
+          const threadsUser = process.env.THREADS_USERNAME;
+          const threadsPass = process.env.THREADS_PASSWORD;
+
+          const scraper = new ThreadsScraper(
+            { headless: true, username: threadsUser },
+            async (msg) => {
+              console.log(`[scraper] ${msg}`);
+              await setStatusMsg(msg);
+            },
+          );
           try {
             await scraper.init();
+            if (threadsUser && threadsPass) {
+              await setStatusMsg("Threadsにログイン中...");
+              await scraper.login(threadsUser, threadsPass);
+            } else {
+              await setStatusMsg("ログイン情報なし（未ログイン収集）");
+            }
 
             // キーワードセットモードでは全枠をキーワード検索に使う（フィード収集はしない）
             const isKeywordSetMode = !!keywordSetId;
@@ -171,10 +257,17 @@ export function createCollectTrendsWorker() {
 
             console.log(`[collect-trends:threads] jobId=${jobId} keywords=${keywords.length} minMatch=${minKeywordMatch}`);
 
-            for (const keyword of keywords) {
+            for (const [kwIdx, keyword] of keywords.entries()) {
+              currentKeyword = keyword;
+              await setStatusMsg(`(${kwIdx + 1}/${keywords.length}) 「${keyword}」を収集中...`);
               try {
                 const scraped = await scraper.scrapeByKeyword(keyword, perKeyword);
                 scraped.forEach(pushPost);
+                // キーワードごとに収集数をリアルタイム更新（SSEで配信される）
+                await db.update(collectionJobs)
+                  .set({ collectedCount: allPosts.length })
+                  .where(eq(collectionJobs.id, jobId));
+                await setStatusMsg(`(${kwIdx + 1}/${keywords.length}) 「${keyword}」完了 — 累計 ${allPosts.length}件`);
                 console.log(`[collect-trends:threads] keyword="${keyword}" scraped=${scraped.length} passed=${allPosts.length}`);
               } catch (err) {
                 console.warn(`[collect-trends:threads] keyword="${keyword}" error:`, err);
@@ -183,8 +276,10 @@ export function createCollectTrendsWorker() {
 
             if (feedTarget > 0) {
               try {
+                await setStatusMsg("おすすめフィードを収集中...");
                 const feedPosts = await scraper.scrapeForYouFeed(feedTarget);
                 feedPosts.forEach(pushPost);
+                await db.update(collectionJobs).set({ collectedCount: allPosts.length }).where(eq(collectionJobs.id, jobId));
                 console.log(`[collect-trends:threads] forYouFeed scraped=${feedPosts.length}`);
               } catch (err) {
                 console.warn("[collect-trends:threads] forYouFeed error:", err);
@@ -247,7 +342,43 @@ export function createCollectTrendsWorker() {
           }
         }
 
+        // ── 画像収集・分析（非同期でバックグラウンド実行） ────────────────────
+        if (shouldCollectImages && imageQueue.length > 0) {
+          console.log(`[collect-trends] Starting image collection: ${imageQueue.length} posts with images`);
+          // バズスコア上位から最大30枚
+          const topImagePosts = imageQueue
+            .sort((a, b) => b.buzzScore - a.buzzScore)
+            .slice(0, 30);
+
+          collectImages(
+            topImagePosts.map(p => ({ ...p, jobId, keywordSetId: keywordSetId ?? null })),
+            30,
+          ).then(async (records) => {
+            if (records.length === 0) return;
+            const BATCH = 50;
+            for (let i = 0; i < records.length; i += BATCH) {
+              await db.insert(collectedImages).values(
+                records.slice(i, i + BATCH).map(r => ({
+                  jobId: r.jobId,
+                  keywordSetId: r.keywordSetId,
+                  keyword: r.keyword,
+                  authorUsername: r.authorUsername,
+                  contentText: r.contentText,
+                  imageUrl: r.imageUrl,
+                  localPath: r.localPath,
+                  likeCount: r.likeCount,
+                  buzzScore: r.buzzScore,
+                  analysisText: r.analysisText || null,
+                  analyzedAt: r.analysisText ? new Date() : null,
+                })),
+              ).catch(err => console.warn("[collect-trends] image insert error:", err));
+            }
+            console.log(`[collect-trends] Image records saved: ${records.length}`);
+          }).catch(err => console.warn("[collect-trends] image collection error:", err));
+        }
+
         // 重複除去・バルクinsert
+        await setStatusMsg("DB に保存中...");
         const unique = deduplicatePosts(allPosts);
         const toInsert = unique.slice(0, targetCount * 2);
 
@@ -259,7 +390,7 @@ export function createCollectTrendsWorker() {
         }
 
         await db.update(collectionJobs)
-          .set({ status: "completed", collectedCount: toInsert.length, completedAt: new Date() })
+          .set({ status: "completed", collectedCount: toInsert.length, completedAt: new Date(), errorMessage: null })
           .where(eq(collectionJobs.id, jobId));
 
         console.log(`[collect-trends] jobId=${jobId} completed. total=${toInsert.length}`);

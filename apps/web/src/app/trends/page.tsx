@@ -18,7 +18,7 @@ import {
 const INDUSTRY_EMOJI: Record<string, string> = {
   business: "💼", marketing: "📣", tech: "💻", finance: "💰",
   beauty: "✨", fitness: "💪", food: "🍜", parenting: "👶",
-  "self-improvement": "🌱", creator: "🎨",
+  "self-improvement": "🌱", creator: "🎨", adult: "🔞",
 };
 
 // 収集の推定時間（秒）: キーワード数 × 45秒 + フィード 120秒
@@ -48,6 +48,7 @@ export default function TrendsPage() {
   const [industries, setIndustries] = useState<ApiIndustry[]>([]);
   const [selected, setSelected] = useState<ApiIndustry | null>(null);
   const [jobs, setJobs] = useState<ApiCollectionJob[]>([]);
+  const [recentJobs, setRecentJobs] = useState<ApiCollectionJob[]>([]);
   const [loadingIndustries, setLoadingIndustries] = useState(true);
   const [collecting, setCollecting] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -82,7 +83,15 @@ export default function TrendsPage() {
     })();
   }, []);
 
-  // ジョブ履歴読み込み
+  // 全業界の直近履歴を読み込む（業界切替に依存しない）
+  const loadRecentJobs = useCallback(async () => {
+    const j = await getCollectionJobs().catch(() => []);
+    setRecentJobs(j);
+  }, []);
+
+  useEffect(() => { loadRecentJobs(); }, [loadRecentJobs]);
+
+  // ジョブ履歴読み込み（選択中業界のみ）
   const loadJobs = useCallback(async () => {
     if (!selected) return;
     const j = await getCollectionJobs(selected.id).catch(() => []);
@@ -105,6 +114,7 @@ export default function TrendsPage() {
       if (j.status === "completed" || j.status === "failed") {
         setActiveJobId(null);
         loadJobs();
+        loadRecentJobs();
       }
     };
     poll();
@@ -413,26 +423,29 @@ export default function TrendsPage() {
         </section>
       )}
 
-      {/* ── 収集履歴 ── */}
+      {/* ── 直近の収集履歴（全業界・常時表示） ── */}
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-            収集履歴
+            直近の収集履歴
           </h2>
-          <button onClick={loadJobs} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+          <button
+            onClick={() => { loadRecentJobs(); loadJobs(); }}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
             <RefreshCw className="h-3.5 w-3.5" /> 更新
           </button>
         </div>
         <div className="overflow-hidden rounded-xl border border-border bg-card divide-y divide-border">
-          {jobs.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              収集履歴がありません。上のボタンから収集を開始してください。
+          {recentJobs.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              まだ収集履歴がありません
             </p>
-          ) : jobs.map(job => {
+          ) : recentJobs.slice(0, 10).map(job => {
             const pct = Math.min(100, Math.round(job.collectedCount / job.targetCount * 100));
+            const slug = job.industry?.slug ?? "";
             return (
               <div key={job.id} className="flex items-center gap-4 px-5 py-4">
-                {/* ステータスアイコン */}
                 {job.status === "completed" ? <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
                  : job.status === "failed"   ? <XCircle     className="h-5 w-5 shrink-0 text-red-500" />
                  : job.status === "running"  ? <Loader2     className="h-5 w-5 shrink-0 text-blue-500 animate-spin" />
@@ -440,7 +453,8 @@ export default function TrendsPage() {
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-foreground">
+                    <span className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                      <span>{INDUSTRY_EMOJI[slug] ?? "📌"}</span>
                       {job.industry?.name ?? "不明な業界"}
                     </span>
                     <span className="text-xs text-muted-foreground">{formatDate(job.createdAt)}</span>
@@ -463,7 +477,7 @@ export default function TrendsPage() {
                 </div>
 
                 {job.status === "completed" && (
-                  <div className="flex items-center gap-2 ml-2">
+                  <div className="flex items-center gap-2 ml-2 shrink-0">
                     <button
                       onClick={() => router.push(`/trends/${job.id}/metrics`)}
                       className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
@@ -484,6 +498,69 @@ export default function TrendsPage() {
           })}
         </div>
       </section>
+
+      {/* ── 選択業界の収集履歴 ── */}
+      {selected && jobs.length > 0 && (
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              {INDUSTRY_EMOJI[selected.slug] ?? "📌"} {selected.name} の履歴
+            </h2>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-border bg-card divide-y divide-border">
+            {jobs.map(job => {
+              const pct = Math.min(100, Math.round(job.collectedCount / job.targetCount * 100));
+              return (
+                <div key={job.id} className="flex items-center gap-4 px-5 py-4">
+                  {job.status === "completed" ? <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
+                   : job.status === "failed"   ? <XCircle     className="h-5 w-5 shrink-0 text-red-500" />
+                   : job.status === "running"  ? <Loader2     className="h-5 w-5 shrink-0 text-blue-500 animate-spin" />
+                   :                             <Clock       className="h-5 w-5 shrink-0 text-muted-foreground" />}
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium text-foreground">
+                        {formatDate(job.createdAt)}
+                      </span>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {job.collectedCount}/{job.targetCount}件
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={cn("h-full rounded-full",
+                          job.status === "completed" ? "bg-green-500"
+                          : job.status === "failed" ? "bg-red-400"
+                          : "bg-blue-500"
+                        )}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {job.status === "completed" && (
+                    <div className="flex items-center gap-2 ml-2 shrink-0">
+                      <button
+                        onClick={() => router.push(`/trends/${job.id}/metrics`)}
+                        className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+                      >
+                        <BarChart3 className="inline h-3.5 w-3.5 mr-1" />
+                        分析
+                      </button>
+                      <button
+                        onClick={() => router.push(`/trends/${job.id}`)}
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted transition-colors"
+                      >
+                        生成
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -430,6 +430,8 @@ export const trendPosts = pgTable(
     // question（問いかけ型）| list（リスト型）| story（体験談型）
     // opinion（主張型）| punchline（オチ型）| other
     charCount: integer("char_count").default(0).notNull(),
+    // Threads投稿URL（例: /@username/post/XXXX）
+    platformPostId: varchar("platform_post_id", { length: 300 }),
     // 投稿時刻（元投稿の）
     postedAt: timestamp("posted_at"),
     collectedAt: timestamp("collected_at").defaultNow().notNull(),
@@ -538,5 +540,312 @@ export const generatedDraftsRelations = relations(generatedDrafts, ({ one }) => 
   post: one(posts, {
     fields: [generatedDrafts.postId],
     references: [posts.id],
+  }),
+}));
+
+// ============================================================
+// collected_images（収集した画像 + バズ分析）
+// ============================================================
+export const collectedImages = pgTable(
+  "collected_images",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: uuid("job_id").references(() => collectionJobs.id).notNull(),
+    keywordSetId: uuid("keyword_set_id").references(() => keywordSets.id),
+    keyword: varchar("keyword", { length: 200 }),
+    authorUsername: varchar("author_username", { length: 100 }),
+    contentText: text("content_text"),
+    imageUrl: text("image_url").notNull(),
+    localPath: varchar("local_path", { length: 500 }),
+    likeCount: integer("like_count").default(0),
+    buzzScore: real("buzz_score").default(0),
+    /** Gemini Vision によるバズ理由分析 */
+    analysisText: text("analysis_text"),
+    analyzedAt: timestamp("analyzed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_collected_images_job").on(t.jobId),
+    index("idx_collected_images_keyword_set").on(t.keywordSetId),
+  ],
+);
+
+export const collectedImagesRelations = relations(collectedImages, ({ one }) => ({
+  job: one(collectionJobs, {
+    fields: [collectedImages.jobId],
+    references: [collectionJobs.id],
+  }),
+  keywordSet: one(keywordSets, {
+    fields: [collectedImages.keywordSetId],
+    references: [keywordSets.id],
+  }),
+}));
+
+// ============================================================
+// adult_genres（ジャンル別リサーチ）
+// ============================================================
+export const adultGenres = pgTable("adult_genres", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const adultGenresRelations = relations(adultGenres, ({ many }) => ({
+  referenceAccounts: many(referenceAccounts),
+  genreProfiles: many(genreProfiles),
+}));
+
+// ============================================================
+// reference_accounts（参考アカウント）
+// ============================================================
+export const referenceAccounts = pgTable("reference_accounts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  genreId: uuid("genre_id").references(() => adultGenres.id, { onDelete: "cascade" }).notNull(),
+  username: varchar("username", { length: 100 }).notNull(),
+  platform: varchar("platform", { length: 20 }).default("threads").notNull(),
+  notes: text("notes"),
+  // プロフィール情報（スクレイプ時に更新）
+  accountCreatedAt: varchar("account_created_at", { length: 50 }), // "2023年4月" or "April 2023"
+  accountAgeMonths: integer("account_age_months"),                  // 開設からの月数
+  followersCount: integer("followers_count"),
+  bio: text("bio"),
+  postsCount: integer("posts_count"),
+  lastProfileScrapedAt: timestamp("last_profile_scraped_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const referenceAccountsRelations = relations(referenceAccounts, ({ one, many }) => ({
+  genre: one(adultGenres, {
+    fields: [referenceAccounts.genreId],
+    references: [adultGenres.id],
+  }),
+  monitoredPosts: many(monitoredPosts),
+}));
+
+// ============================================================
+// monitored_posts（参考アカウント投稿の時系列追跡）
+// ============================================================
+export const monitoredPosts = pgTable(
+  "monitored_posts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    referenceAccountId: uuid("reference_account_id")
+      .references(() => referenceAccounts.id, { onDelete: "cascade" })
+      .notNull(),
+    genreId: uuid("genre_id")
+      .references(() => adultGenres.id, { onDelete: "cascade" })
+      .notNull(),
+    /** Threadsの投稿URL（例: /@username/post/ABCD） — ユニーク追跡用 */
+    platformPostId: varchar("platform_post_id", { length: 300 }),
+    contentText: text("content_text").notNull(),
+    imageUrls: jsonb("image_urls").$type<string[]>().default([]),
+    hasImage: boolean("has_image").default(false).notNull(),
+    likeCount: integer("like_count").default(0).notNull(),
+    repostCount: integer("repost_count").default(0).notNull(),
+    replyCount: integer("reply_count").default(0).notNull(),
+    viewCount: integer("view_count").default(0).notNull(),
+    buzzScore: real("buzz_score").default(0).notNull(),
+    postedAt: timestamp("posted_at"),
+    firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
+    lastSnapshotAt: timestamp("last_snapshot_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_monitored_posts_genre").on(t.genreId),
+    index("idx_monitored_posts_account").on(t.referenceAccountId),
+    index("idx_monitored_posts_buzz").on(t.genreId, t.buzzScore),
+  ],
+);
+
+export const monitoredPostsRelations = relations(monitoredPosts, ({ one, many }) => ({
+  referenceAccount: one(referenceAccounts, {
+    fields: [monitoredPosts.referenceAccountId],
+    references: [referenceAccounts.id],
+  }),
+  genre: one(adultGenres, {
+    fields: [monitoredPosts.genreId],
+    references: [adultGenres.id],
+  }),
+  scoreSnapshots: many(postScoreSnapshots),
+}));
+
+// ============================================================
+// post_score_snapshots（投稿スコアの時系列スナップショット）
+// ============================================================
+export const postScoreSnapshots = pgTable(
+  "post_score_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    monitoredPostId: uuid("monitored_post_id")
+      .references(() => monitoredPosts.id, { onDelete: "cascade" })
+      .notNull(),
+    likeCount: integer("like_count").default(0).notNull(),
+    repostCount: integer("repost_count").default(0).notNull(),
+    replyCount: integer("reply_count").default(0).notNull(),
+    viewCount: integer("view_count").default(0).notNull(),
+    buzzScore: real("buzz_score").default(0).notNull(),
+    snapshotAt: timestamp("snapshot_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_post_score_snapshots_post").on(t.monitoredPostId),
+    index("idx_post_score_snapshots_at").on(t.snapshotAt),
+  ],
+);
+
+export const postScoreSnapshotsRelations = relations(postScoreSnapshots, ({ one }) => ({
+  monitoredPost: one(monitoredPosts, {
+    fields: [postScoreSnapshots.monitoredPostId],
+    references: [monitoredPosts.id],
+  }),
+}));
+
+// ============================================================
+// genre_profiles（Gemini生成プロファイル）
+// ============================================================
+export const genreProfiles = pgTable("genre_profiles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  genreId: uuid("genre_id").references(() => adultGenres.id, { onDelete: "cascade" }).notNull(),
+  status: varchar("status", { length: 20 }).default("pending").notNull(),
+  scrapedPostsCount: integer("scraped_posts_count").default(0),
+  profileJson: jsonb("profile_json"),
+  rawPosts: jsonb("raw_posts"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const genreProfilesRelations = relations(genreProfiles, ({ one }) => ({
+  genre: one(adultGenres, {
+    fields: [genreProfiles.genreId],
+    references: [adultGenres.id],
+  }),
+}));
+
+// ============================================================
+// account_daily_snapshots（参考アカウントの日次メトリクス）
+// ============================================================
+export const accountDailySnapshots = pgTable(
+  "account_daily_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    referenceAccountId: uuid("reference_account_id")
+      .references(() => referenceAccounts.id, { onDelete: "cascade" })
+      .notNull(),
+    genreId: uuid("genre_id")
+      .references(() => adultGenres.id, { onDelete: "cascade" })
+      .notNull(),
+    snapshotDate: date("snapshot_date").notNull(),
+    followersCount: integer("followers_count"),
+    followingCount: integer("following_count"),
+    postsCount: integer("posts_count"),
+    dailyPostsCount: integer("daily_posts_count").default(0),
+    totalLikes: integer("total_likes").default(0),
+    totalImpressions: integer("total_impressions").default(0),
+    totalReposts: integer("total_reposts").default(0),
+    totalReplies: integer("total_replies").default(0),
+    engagementRate: real("engagement_rate"),
+    topPostBuzzScore: real("top_post_buzz_score"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_account_daily_snapshots_account_date").on(t.referenceAccountId, t.snapshotDate),
+    index("idx_account_daily_snapshots_genre_date").on(t.genreId, t.snapshotDate),
+    uniqueIndex("idx_account_daily_snapshots_unique").on(t.referenceAccountId, t.snapshotDate),
+  ],
+);
+
+export const accountDailySnapshotsRelations = relations(accountDailySnapshots, ({ one }) => ({
+  referenceAccount: one(referenceAccounts, {
+    fields: [accountDailySnapshots.referenceAccountId],
+    references: [referenceAccounts.id],
+  }),
+  genre: one(adultGenres, {
+    fields: [accountDailySnapshots.genreId],
+    references: [adultGenres.id],
+  }),
+}));
+
+// ============================================================
+// similar_accounts（類似アカウント提案）
+// ============================================================
+export const similarAccounts = pgTable(
+  "similar_accounts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    referenceAccountId: uuid("reference_account_id")
+      .references(() => referenceAccounts.id, { onDelete: "cascade" })
+      .notNull(),
+    genreId: uuid("genre_id")
+      .references(() => adultGenres.id, { onDelete: "cascade" })
+      .notNull(),
+    username: varchar("username", { length: 100 }).notNull(),
+    platform: varchar("platform", { length: 20 }).default("threads").notNull(),
+    followersCount: integer("followers_count"),
+    bio: text("bio"),
+    similarityScore: real("similarity_score").default(0),
+    similarityReason: text("similarity_reason"),
+    isAdded: boolean("is_added").default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_similar_accounts_genre").on(t.genreId),
+    index("idx_similar_accounts_ref").on(t.referenceAccountId),
+  ],
+);
+
+export const similarAccountsRelations = relations(similarAccounts, ({ one }) => ({
+  referenceAccount: one(referenceAccounts, {
+    fields: [similarAccounts.referenceAccountId],
+    references: [referenceAccounts.id],
+  }),
+  genre: one(adultGenres, {
+    fields: [similarAccounts.genreId],
+    references: [adultGenres.id],
+  }),
+}));
+
+// ============================================================
+// account_groups（アカウントグループ — 一括投稿管理）
+// ============================================================
+export const accountGroups = pgTable("account_groups", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const accountGroupsRelations = relations(accountGroups, ({ many }) => ({
+  members: many(accountGroupMembers),
+}));
+
+// ============================================================
+// account_group_members（グループメンバー）
+// ============================================================
+export const accountGroupMembers = pgTable(
+  "account_group_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    groupId: uuid("group_id")
+      .references(() => accountGroups.id, { onDelete: "cascade" })
+      .notNull(),
+    accountId: uuid("account_id")
+      .references(() => accounts.id, { onDelete: "cascade" })
+      .notNull(),
+    addedAt: timestamp("added_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_group_members_unique").on(t.groupId, t.accountId),
+  ],
+);
+
+export const accountGroupMembersRelations = relations(accountGroupMembers, ({ one }) => ({
+  group: one(accountGroups, {
+    fields: [accountGroupMembers.groupId],
+    references: [accountGroups.id],
+  }),
+  account: one(accounts, {
+    fields: [accountGroupMembers.accountId],
+    references: [accounts.id],
   }),
 }));

@@ -204,6 +204,8 @@ export interface ApiCollectionJob {
   status: "pending" | "running" | "completed" | "failed";
   targetCount: number;
   collectedCount: number;
+  /** 収集中のリアルタイム進捗メッセージ（running時のみ） */
+  statusMessage?: string | null;
   errorMessage: string | null;
   startedAt: string | null;
   completedAt: string | null;
@@ -229,6 +231,7 @@ export interface ApiTrendPost {
   engagementRate: number;
   postFormat: string | null;
   charCount: number;
+  platformPostId: string | null;
   postedAt: string | null;
   collectedAt: string;
 }
@@ -424,11 +427,70 @@ export function deleteKeywordSet(id: string) {
   });
 }
 
-export function startKeywordCollection(id: string, targetCount = 200, periodDays = 7) {
+export function startKeywordCollection(id: string, targetCount = 200, periodDays = 7, collectImages = false) {
   return apiFetch<{ jobId: string; status: string }>(`/api/keyword-sets/${id}/collect`, {
     method: "POST",
-    body: JSON.stringify({ targetCount, periodDays }),
+    body: JSON.stringify({ targetCount, periodDays, collectImages }),
   });
+}
+
+// ---- Job SSE stream ----
+
+const SSE_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+
+/**
+ * SSEで収集ジョブの進捗をリアルタイム受信する
+ * @returns cleanup function（unmount時に呼ぶ）
+ */
+export function subscribeJobProgress(
+  jobId: string,
+  onUpdate: (job: ApiCollectionJob) => void,
+  onEnd: (job: ApiCollectionJob | null) => void,
+): () => void {
+  const es = new EventSource(`${SSE_BASE}/api/trends/jobs/${jobId}/stream`);
+
+  es.addEventListener("update", (e: MessageEvent) => {
+    const job = JSON.parse(e.data as string) as ApiCollectionJob;
+    onUpdate(job);
+    if (job.status === "completed" || job.status === "failed") {
+      es.close();
+      onEnd(job);
+    }
+  });
+
+  es.addEventListener("error", (e: Event) => {
+    console.warn("[SSE] error:", e);
+    es.close();
+    onEnd(null);
+  });
+
+  return () => es.close();
+}
+
+// ---- Collected Images ----
+
+export interface ApiCollectedImage {
+  id: string;
+  jobId: string;
+  keywordSetId: string | null;
+  keyword: string | null;
+  authorUsername: string | null;
+  contentText: string | null;
+  imageUrl: string;
+  localPath: string | null;
+  likeCount: number | null;
+  buzzScore: number | null;
+  analysisText: string | null;
+  analyzedAt: string | null;
+  createdAt: string;
+}
+
+export function getCollectedImages(params: { jobId?: string; keywordSetId?: string; limit?: number }) {
+  const qs = new URLSearchParams();
+  if (params.jobId) qs.set("jobId", params.jobId);
+  if (params.keywordSetId) qs.set("keywordSetId", params.keywordSetId);
+  if (params.limit) qs.set("limit", String(params.limit));
+  return apiFetch<ApiCollectedImage[]>(`/api/trends/images?${qs}`);
 }
 
 export function getKeywordSetJobs(id: string) {
@@ -514,4 +576,412 @@ export function saveSettings(updates: Record<string, string>) {
     method: "PUT",
     body: JSON.stringify(updates),
   });
+}
+
+// ---- ジャンル別リサーチ ----
+
+export interface ApiAdultGenre {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+  accountCount?: number;
+  latestProfile?: { status: string; updatedAt: string } | null;
+}
+
+export interface ApiReferenceAccount {
+  id: string;
+  genreId: string;
+  username: string;
+  platform: string;
+  notes: string | null;
+  // プロフィール情報（スクレイプ後に設定）
+  accountCreatedAt: string | null;
+  accountAgeMonths: number | null;
+  followersCount: number | null;
+  bio: string | null;
+  postsCount: number | null;
+  lastProfileScrapedAt: string | null;
+  createdAt: string;
+}
+
+export interface ApiMonitoredPost {
+  id: string;
+  referenceAccountId: string;
+  genreId: string;
+  platformPostId: string | null;
+  contentText: string;
+  imageUrls: string[];
+  hasImage: boolean;
+  likeCount: number;
+  repostCount: number;
+  replyCount: number;
+  viewCount: number;
+  buzzScore: number;
+  postedAt: string | null;
+  firstSeenAt: string;
+  lastSnapshotAt: string;
+}
+
+export interface ApiPostScoreSnapshot {
+  id: string;
+  monitoredPostId: string;
+  likeCount: number;
+  repostCount: number;
+  replyCount: number;
+  viewCount: number;
+  buzzScore: number;
+  snapshotAt: string;
+}
+
+export interface ApiGenreProfile {
+  id: string;
+  genreId: string;
+  status: string;
+  scrapedPostsCount: number;
+  profileJson: {
+    genreSummary?: string;
+    accountAgeInsights?: {
+      newAccountStrategy: string;
+      earlyGrowthPattern: string;
+      reproducibility: string;
+    };
+    buzzTriggers?: { trigger: string; mechanism: string; example: string }[];
+    imageAnalysis?: {
+      bestImageTypes: string[];
+      imageCharacteristics: string;
+      imageVsNoImage: string;
+    };
+    imageTextCombos?: { imageType: string; textPattern: string; effectiveness: string }[];
+    toneAndStyle?: { description: string; examples: string[] };
+    hookPatterns?: { name: string; description: string; example: string }[];
+    topicClusters?: string[];
+    emojiUsage?: string;
+    postStructure?: string;
+    callToAction?: string;
+    avoidedWords?: string[];
+    trendingKeywords?: {
+      timeSensitive: string[];
+      evergreen: string[];
+      risky: string[];
+    };
+    recommendedKeywords?: string[];
+    accountCharacteristics?: string;
+    topBuzzPosts?: {
+      username: string;
+      accountAgeSummary: string;
+      contentSummary: string;
+      likeCount: number;
+      repostCount: number;
+      hasImage: boolean;
+      buzzReason: string;
+    }[];
+  } | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getAdultGenres() {
+  return apiFetch<ApiAdultGenre[]>("/api/research/genres");
+}
+
+export function createAdultGenre(data: { name: string; description?: string }) {
+  return apiFetch<ApiAdultGenre>("/api/research/genres", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteAdultGenre(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/research/genres/${id}`, { method: "DELETE" });
+}
+
+export function getAdultGenre(id: string) {
+  return apiFetch<ApiAdultGenre & { referenceAccounts: ApiReferenceAccount[] }>(
+    `/api/research/genres/${id}`,
+  );
+}
+
+export function addReferenceAccount(
+  genreId: string,
+  data: { username: string; platform?: string; notes?: string },
+) {
+  return apiFetch<ApiReferenceAccount>(`/api/research/genres/${genreId}/accounts`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteReferenceAccount(genreId: string, accountId: string) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/research/genres/${genreId}/accounts/${accountId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function analyzeGenre(genreId: string) {
+  return apiFetch<{ profileId: string; status: string }>(
+    `/api/research/genres/${genreId}/analyze`,
+    { method: "POST" },
+  );
+}
+
+export function getGenreProfile(genreId: string) {
+  return apiFetch<ApiGenreProfile | null>(`/api/research/genres/${genreId}/profile`);
+}
+
+export function getAccountsWithProfile(genreId: string) {
+  return apiFetch<ApiReferenceAccount[]>(`/api/research/genres/${genreId}/accounts-with-profile`);
+}
+
+export function getMonitoredPosts(genreId: string, limit = 50) {
+  return apiFetch<ApiMonitoredPost[]>(`/api/research/genres/${genreId}/posts?limit=${limit}`);
+}
+
+export function getPostScoreHistory(postId: string) {
+  return apiFetch<ApiPostScoreSnapshot[]>(`/api/research/posts/${postId}/history`);
+}
+
+export function triggerMonitor(genreId: string) {
+  return apiFetch<{ jobId: string; status: string }>(
+    `/api/research/genres/${genreId}/monitor`,
+    { method: "POST" },
+  );
+}
+
+// ---- スコア監視 ----
+
+export interface ApiDailySnapshot {
+  id: string;
+  referenceAccountId: string;
+  genreId: string;
+  snapshotDate: string;
+  followersCount: number | null;
+  followingCount: number | null;
+  postsCount: number | null;
+  dailyPostsCount: number;
+  totalLikes: number;
+  totalImpressions: number;
+  totalReposts: number;
+  totalReplies: number;
+  engagementRate: number | null;
+  topPostBuzzScore: number | null;
+  createdAt: string;
+}
+
+export interface ApiDailyAggregate {
+  snapshotDate: string;
+  totalFollowers: number;
+  totalPosts: number;
+  totalDailyPosts: number;
+  totalLikes: number;
+  totalImpressions: number;
+  totalReposts: number;
+  totalReplies: number;
+  avgEngagementRate: number;
+  accountCount: number;
+}
+
+export function getDailySnapshots(genreId: string, days = 30, accountId?: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (accountId) qs.set("accountId", accountId);
+  return apiFetch<ApiDailySnapshot[]>(
+    `/api/research/genres/${genreId}/daily-snapshots?${qs}`,
+  );
+}
+
+export function getDailyAggregate(genreId: string, days = 30) {
+  return apiFetch<ApiDailyAggregate[]>(
+    `/api/research/genres/${genreId}/daily-aggregate?days=${days}`,
+  );
+}
+
+export function triggerSnapshot(genreId: string) {
+  return apiFetch<{ created: number; date: string }>(
+    `/api/research/genres/${genreId}/snapshot`,
+    { method: "POST" },
+  );
+}
+
+// ---- 成長分析 ----
+
+export interface ApiGrowthData {
+  account: ApiReferenceAccount;
+  dailyData: ApiDailySnapshot[];
+  buzzPosts: ApiMonitoredPost[];
+  followerGrowthRate: number;
+  dataPoints: number;
+}
+
+export function getGrowthAnalysis(genreId: string) {
+  return apiFetch<ApiGrowthData[]>(`/api/research/genres/${genreId}/growth`);
+}
+
+// ---- 類似アカウント ----
+
+export interface ApiSimilarAccount {
+  id: string;
+  referenceAccountId: string;
+  genreId: string;
+  username: string;
+  platform: string;
+  followersCount: number | null;
+  bio: string | null;
+  similarityScore: number;
+  similarityReason: string | null;
+  isAdded: boolean;
+  createdAt: string;
+}
+
+export function getSimilarAccounts(genreId: string) {
+  return apiFetch<ApiSimilarAccount[]>(`/api/research/genres/${genreId}/similar`);
+}
+
+export function addSimilarToReference(similarId: string) {
+  return apiFetch<ApiReferenceAccount>(
+    `/api/research/similar/${similarId}/add`,
+    { method: "POST" },
+  );
+}
+
+// ---- パフォーマンスランキング ----
+
+export interface ApiPerformancePost {
+  id: string;
+  account_id: string;
+  platform: string;
+  content_text: string | null;
+  status: string;
+  posted_at: string | null;
+  created_at: string;
+  likes: number;
+  reposts: number;
+  replies: number;
+  views: number;
+  last_metrics_at: string;
+  initial_likes: number;
+  initial_views: number;
+  first_collected_at: string | null;
+  engagement_rate: number;
+  account_username: string;
+  account_display_name: string | null;
+}
+
+export interface ApiPerformanceSummary {
+  total_posts: number;
+  avg_likes: number;
+  avg_impressions: number;
+  max_likes: number;
+  max_impressions: number;
+  avg_engagement_rate: number;
+}
+
+export function getPerformanceRanking(
+  metric: "likes" | "impressions" | "engagement" | "initial" = "likes",
+  limit = 50,
+  accountId?: string,
+) {
+  const qs = new URLSearchParams({ metric, limit: String(limit) });
+  if (accountId) qs.set("accountId", accountId);
+  return apiFetch<ApiPerformancePost[]>(`/api/research/performance?${qs}`);
+}
+
+export function getPerformanceSummary(accountId?: string) {
+  const qs = accountId ? `?accountId=${accountId}` : "";
+  return apiFetch<ApiPerformanceSummary>(`/api/research/performance/summary${qs}`);
+}
+
+// ---- アカウントグループ ----
+
+export interface ApiAccountGroupMember {
+  id: string;
+  accountId: string;
+  addedAt: string;
+  account: {
+    id: string;
+    platform: string;
+    username: string;
+    displayName: string | null;
+    status: string;
+  };
+}
+
+export interface ApiAccountGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  memberCount: number;
+  members: ApiAccountGroupMember[];
+}
+
+export function getAccountGroups() {
+  return apiFetch<ApiAccountGroup[]>("/api/account-groups");
+}
+
+export function createAccountGroup(data: { name: string; description?: string }) {
+  return apiFetch<ApiAccountGroup>("/api/account-groups", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteAccountGroup(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/account-groups/${id}`, { method: "DELETE" });
+}
+
+export function addGroupMember(groupId: string, accountId: string) {
+  return apiFetch<ApiAccountGroupMember>(`/api/account-groups/${groupId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ accountId }),
+  });
+}
+
+export function removeGroupMember(groupId: string, memberId: string) {
+  return apiFetch<{ ok: boolean }>(`/api/account-groups/${groupId}/members/${memberId}`, {
+    method: "DELETE",
+  });
+}
+
+export function bulkPost(groupId: string, data: {
+  contentText: string;
+  scheduledAt?: string;
+  linkUrl?: string;
+}) {
+  return apiFetch<{ created: number; posts: { postId: string; accountId: string; username: string; platform: string; status: string }[] }>(
+    `/api/account-groups/${groupId}/bulk-post`,
+    { method: "POST", body: JSON.stringify(data) },
+  );
+}
+
+export function getGroupStats(groupId: string) {
+  return apiFetch<{
+    group: { id: string; name: string; description: string | null };
+    stats: { account_id: string; username: string; platform: string; display_name: string | null; post_count: number; posted_count: number; followers: number }[];
+  }>(`/api/account-groups/${groupId}/stats`);
+}
+
+// ═════════════════════════════════════════════════════════════
+// X Mentor (x-mastery-mentor skill)
+// ═════════════════════════════════════════════════════════════
+export interface MentorMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export type MentorScenario = "write" | "topic" | "review" | "growth" | "diagnose";
+
+export function postMentorChat(messages: MentorMessage[], scenario?: MentorScenario) {
+  return apiFetch<{ reply: string }>(`/api/mentor/chat`, {
+    method: "POST",
+    body: JSON.stringify({ messages, scenario }),
+  });
+}
+
+export function getMentorHealth() {
+  return apiFetch<{ ok: boolean; skill_dir: string; context_chars: number; gemini_key: boolean; error?: string }>(
+    `/api/mentor/health`,
+  );
 }

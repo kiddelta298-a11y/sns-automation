@@ -4,19 +4,19 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   getKeywordSets, createKeywordSet, deleteKeywordSet,
-  startKeywordCollection, getKeywordSetJob,
+  startKeywordCollection, subscribeJobProgress,
   analyzeJob, generateDrafts, postDraft,
-  getAccounts,
+  getAccounts, getCollectedImages,
   type ApiKeywordSet, type ApiCollectionJob,
-  type ApiGeneratedDraft, type ApiAccount,
+  type ApiGeneratedDraft, type ApiAccount, type ApiCollectedImage,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   Hash, X, Play, Loader2, CheckCircle2, XCircle,
-  Sparkles, Send, Trash2, ChevronDown, ChevronUp,
-  BookmarkPlus, RotateCcw,
+  Send, ChevronDown, ChevronUp,
+  BookmarkPlus, RotateCcw, ImageIcon, Zap,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,13 +77,16 @@ function KeywordInput({ keywords, onChange, disabled }: {
 // ─────────────────────────────────────────────────────────────────────────────
 function StepIndicator({ phase, job }: { phase: Phase; job: ApiCollectionJob | null }) {
   const steps = [
-    { key: "collecting", label: "Threadsから収集", detail: job ? `${job.collectedCount} / ${job.targetCount}件` : "" },
+    { key: "collecting", label: "Threadsから収集" },
     { key: "analyzing",  label: "バズパターンをAI分析" },
     { key: "generating", label: "投稿文を自動生成" },
   ] as const;
 
   const phaseIndex = phase === "collecting" ? 0 : phase === "analyzing" ? 1 : phase === "generating" ? 2 : phase === "done" ? 3 : -1;
-  const progress = job ? Math.min(100, Math.round(job.collectedCount / job.targetCount * 100)) : 0;
+  const progress = job && job.targetCount > 0
+    ? Math.min(100, Math.round(job.collectedCount / job.targetCount * 100))
+    : 0;
+  const statusMsg = job?.statusMessage;
 
   return (
     <div className="rounded-xl border border-border bg-card p-5 space-y-4">
@@ -102,23 +105,32 @@ function StepIndicator({ phase, job }: { phase: Phase; job: ApiCollectionJob | n
               )}>
                 {isDone ? <CheckCircle2 className="h-4 w-4" /> : isActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : i + 1}
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <p className={cn("text-sm font-medium", isPending ? "text-muted-foreground" : "text-foreground")}>
                   {step.label}
+                  {isActive && step.key === "collecting" && job && (
+                    <span className="ml-2 text-muted-foreground font-normal">
+                      {job.collectedCount} / {job.targetCount}件
+                    </span>
+                  )}
                 </p>
-                {isActive && step.key === "collecting" && job && (
-                  <p className="text-xs text-muted-foreground mt-0.5">{step.detail}</p>
+                {/* リアルタイム進捗メッセージ */}
+                {isActive && step.key === "collecting" && statusMsg && (
+                  <p className="mt-0.5 text-xs text-primary/80 truncate">{statusMsg}</p>
+                )}
+                {isActive && step.key !== "collecting" && (
+                  <p className="mt-0.5 text-xs text-muted-foreground animate-pulse">処理中...</p>
                 )}
               </div>
-              {isActive && step.key !== "collecting" && (
-                <span className="text-xs text-muted-foreground animate-pulse">処理中...</span>
-              )}
             </div>
             {/* 収集プログレスバー */}
             {isActive && step.key === "collecting" && (
               <div className="mt-2 ml-10">
                 <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                  <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${progress}%` }} />
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-500"
+                    style={{ width: progress > 0 ? `${progress}%` : "5%" /* 最低5%で"動いてる感"を出す */ }}
+                  />
                 </div>
               </div>
             )}
@@ -191,6 +203,7 @@ export default function KeywordsPage() {
   const [draftCount, setDraftCount] = useState(3);
   const [periodDays, setPeriodDays] = useState(7);
   const [seed, setSeed] = useState("");
+  const [collectImages, setCollectImages] = useState(false);
 
   // ── 実行状態 ──
   const [phase, setPhase] = useState<Phase>("idle");
@@ -200,6 +213,8 @@ export default function KeywordsPage() {
   // ── 結果 ──
   const [drafts, setDrafts] = useState<ApiGeneratedDraft[]>([]);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [collectedImgs, setCollectedImgs] = useState<ApiCollectedImage[]>([]);
+  const [imgTab, setImgTab] = useState<"drafts" | "images">("drafts");
 
   // ── 投稿アカウント ──
   const [accounts, setAccounts] = useState<ApiAccount[]>([]);
@@ -211,7 +226,7 @@ export default function KeywordsPage() {
   const [savedSets, setSavedSets] = useState<ApiKeywordSet[]>([]);
   const [showSaved, setShowSaved] = useState(false);
 
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const sseCleanupRef = useRef<(() => void) | null>(null);
 
   // アカウント & 保存済みセット読み込み
   useEffect(() => {
@@ -223,22 +238,28 @@ export default function KeywordsPage() {
     getKeywordSets().then(setSavedSets).catch(() => {});
   }, []);
 
-  // ポーリング停止ヘルパー
-  const stopPolling = () => {
-    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+  // SSE クリーンアップ
+  const stopSSE = () => {
+    sseCleanupRef.current?.();
+    sseCleanupRef.current = null;
   };
 
   // ─────────────────────────────────────────────────
   // メインパイプライン
   // ─────────────────────────────────────────────────
-  const runPipeline = useCallback(async (kws: string[], target: number, min: number, count: number, period: number, seedText: string) => {
+  const runPipeline = useCallback(async (
+    kws: string[], target: number, min: number, count: number,
+    period: number, seedText: string, withImages: boolean,
+  ) => {
     if (kws.length === 0) return;
     setPhase("collecting");
     setErrorMsg(null);
     setDrafts([]);
     setCheckedIds(new Set());
+    setCollectedImgs([]);
     setCurrentJob(null);
-    stopPolling();
+    setImgTab("drafts");
+    stopSSE();
 
     try {
       // ① キーワードセットを作成（名前は自動生成）
@@ -247,21 +268,22 @@ export default function KeywordsPage() {
       setSavedSets(prev => [ks, ...prev]);
 
       // ② 収集開始
-      const { jobId } = await startKeywordCollection(ks.id, target, period);
+      const { jobId } = await startKeywordCollection(ks.id, target, period, withImages);
 
-      // ③ 収集完了をポーリング待機
+      // ③ SSEでリアルタイム進捗を受信（ポーリング不要）
       const job = await new Promise<ApiCollectionJob>((resolve, reject) => {
-        const check = async () => {
-          try {
-            const j = await getKeywordSetJob(jobId);
-            setCurrentJob(j);
-            if (j.status === "completed") { stopPolling(); resolve(j); }
-            else if (j.status === "failed") { stopPolling(); reject(new Error(j.errorMessage ?? "収集に失敗しました")); }
-          } catch (e) { stopPolling(); reject(e); }
-        };
-        void check();
-        pollingRef.current = setInterval(check, 2000);
+        const cleanup = subscribeJobProgress(
+          jobId,
+          (j) => setCurrentJob(j),
+          (j) => {
+            if (!j) { reject(new Error("接続が切断されました")); return; }
+            if (j.status === "completed") resolve(j);
+            else reject(new Error(j.errorMessage ?? "収集に失敗しました"));
+          },
+        );
+        sseCleanupRef.current = cleanup;
       });
+      stopSSE();
 
       if (job.collectedCount === 0) throw new Error("投稿が1件も収集できませんでした。キーワードを変えて試してください。");
 
@@ -278,15 +300,28 @@ export default function KeywordsPage() {
       setCheckedIds(new Set(result.drafts.map(d => d.id)));
       setPhase("done");
 
+      // ⑦ 画像収集が有効なら非同期で取得（バックグラウンドで処理中の可能性あり）
+      if (withImages) {
+        getCollectedImages({ jobId, limit: 30 })
+          .then(imgs => { setCollectedImgs(imgs); if (imgs.length > 0) setImgTab("images"); })
+          .catch(() => {});
+        // 30秒後に再取得（画像分析が遅れる場合の対策）
+        setTimeout(() => {
+          getCollectedImages({ jobId, limit: 30 })
+            .then(imgs => setCollectedImgs(imgs))
+            .catch(() => {});
+        }, 30_000);
+      }
+
     } catch (err) {
-      stopPolling();
+      stopSSE();
       setErrorMsg(err instanceof Error ? err.message : "エラーが発生しました");
       setPhase("error");
     }
   }, []);
 
   // クリーンアップ
-  useEffect(() => () => stopPolling(), []);
+  useEffect(() => () => stopSSE(), []);
 
   // ── 個別投稿 ──
   const handlePost = async (draft: ApiGeneratedDraft) => {
@@ -412,9 +447,25 @@ export default function KeywordsPage() {
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:opacity-50" />
         </div>
 
+        {/* 画像収集オプション */}
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={collectImages}
+            onChange={(e) => setCollectImages(e.target.checked)}
+            disabled={isRunning}
+            className="h-4 w-4 rounded accent-primary"
+          />
+          <span className="flex items-center gap-1.5 text-sm text-foreground">
+            <ImageIcon className="h-4 w-4 text-muted-foreground" />
+            バズ画像を収集してAI分析する
+            <span className="text-xs text-muted-foreground">（Gemini Vision・無料）</span>
+          </span>
+        </label>
+
         {/* 実行ボタン */}
         <button
-          onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, periodDays, seed)}
+          onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, periodDays, seed, collectImages)}
           disabled={isRunning || keywords.length === 0}
           className={cn(
             "w-full flex items-center justify-center gap-2 rounded-xl py-3 text-base font-bold transition-all",
@@ -484,65 +535,158 @@ export default function KeywordsPage() {
       {/* ── 生成結果 ── */}
       {phase === "done" && drafts.length > 0 && (
         <div className="space-y-4">
+          {/* タブ切り替え */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h2 className="text-base font-bold text-foreground">
-              生成された投稿文 <span className="text-muted-foreground font-normal text-sm">（{drafts.length}件）</span>
-            </h2>
-            <div className="flex items-center gap-2">
-              {/* 再生成ボタン */}
+            <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
               <button
-                onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, periodDays, seed)}
-                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
-                <RotateCcw className="h-3.5 w-3.5" /> 再実行
+                onClick={() => setImgTab("drafts")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  imgTab === "drafts" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}>
+                <Send className="h-3.5 w-3.5" />
+                投稿文 {drafts.length > 0 && `(${drafts.length})`}
               </button>
-            </div>
-          </div>
-
-          {/* 一括操作バー */}
-          <div className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 flex-wrap">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={allChecked}
-                onChange={(e) => setCheckedIds(e.target.checked ? new Set(drafts.map(d => d.id)) : new Set())}
-                className="h-4 w-4 rounded accent-primary" />
-              <span className="text-sm font-medium text-foreground">全選択</span>
-            </label>
-            <span className="text-xs text-muted-foreground">{checkedIds.size}件選択中</span>
-            <div className="ml-auto flex items-center gap-2">
-              {accounts.length > 0 && (
-                <select value={postAccountId} onChange={(e) => setPostAccountId(e.target.value)}
-                  className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs focus:border-primary focus:outline-none">
-                  {accounts.map(a => <option key={a.id} value={a.id}>@{a.username}</option>)}
-                </select>
+              {collectImages && (
+                <button
+                  onClick={() => setImgTab("images")}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                    imgTab === "images" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                  )}>
+                  <ImageIcon className="h-3.5 w-3.5" />
+                  バズ画像 {collectedImgs.length > 0 && `(${collectedImgs.length})`}
+                  {collectedImgs.length === 0 && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
+                </button>
               )}
-              <button
-                onClick={handleBulkPost}
-                disabled={bulkPosting || checkedIds.size === 0 || accounts.length === 0}
-                className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
-                {bulkPosting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                一括投稿 {checkedIds.size > 0 && `（${checkedIds.size}件）`}
-              </button>
             </div>
+            <button
+              onClick={() => runPipeline(keywords, targetCount, minMatch, draftCount, periodDays, seed, collectImages)}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+              <RotateCcw className="h-3.5 w-3.5" /> 再実行
+            </button>
           </div>
 
-          {/* 下書きカード一覧 */}
-          <div className="space-y-3">
-            {drafts.map((draft) => (
-              <DraftCard
-                key={draft.id}
-                draft={draft}
-                checked={checkedIds.has(draft.id)}
-                onCheck={(v) => setCheckedIds(prev => {
-                  const next = new Set(prev);
-                  v ? next.add(draft.id) : next.delete(draft.id);
-                  return next;
-                })}
-                onPost={() => handlePost(draft)}
-                posting={postingId === draft.id}
-              />
-            ))}
-          </div>
+          {/* ── 投稿文タブ ── */}
+          {imgTab === "drafts" && (
+            <>
+              {/* 一括操作バー */}
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 flex-wrap">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={allChecked}
+                    onChange={(e) => setCheckedIds(e.target.checked ? new Set(drafts.map(d => d.id)) : new Set())}
+                    className="h-4 w-4 rounded accent-primary" />
+                  <span className="text-sm font-medium text-foreground">全選択</span>
+                </label>
+                <span className="text-xs text-muted-foreground">{checkedIds.size}件選択中</span>
+                <div className="ml-auto flex items-center gap-2">
+                  {accounts.length > 0 && (
+                    <select value={postAccountId} onChange={(e) => setPostAccountId(e.target.value)}
+                      className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs focus:border-primary focus:outline-none">
+                      {accounts.map(a => <option key={a.id} value={a.id}>@{a.username}</option>)}
+                    </select>
+                  )}
+                  <button
+                    onClick={handleBulkPost}
+                    disabled={bulkPosting || checkedIds.size === 0 || accounts.length === 0}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
+                    {bulkPosting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                    一括投稿 {checkedIds.size > 0 && `（${checkedIds.size}件）`}
+                  </button>
+                </div>
+              </div>
+              {/* 下書きカード一覧 */}
+              <div className="space-y-3">
+                {drafts.map((draft) => (
+                  <DraftCard
+                    key={draft.id}
+                    draft={draft}
+                    checked={checkedIds.has(draft.id)}
+                    onCheck={(v) => setCheckedIds(prev => {
+                      const next = new Set(prev);
+                      v ? next.add(draft.id) : next.delete(draft.id);
+                      return next;
+                    })}
+                    onPost={() => handlePost(draft)}
+                    posting={postingId === draft.id}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── 画像ギャラリータブ ── */}
+          {imgTab === "images" && (
+            <div>
+              {collectedImgs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+                  <Loader2 className="h-8 w-8 animate-spin opacity-40" />
+                  <p className="text-sm">画像収集・分析中です... 少しお待ちください</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {collectedImgs.map((img) => (
+                    <div key={img.id} className="rounded-xl border border-border bg-card overflow-hidden">
+                      {/* サムネイル */}
+                      <div className="relative aspect-video bg-muted flex items-center justify-center">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={img.imageUrl}
+                          alt={img.contentText?.slice(0, 40) ?? ""}
+                          className="w-full h-full object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                        {/* いいね数バッジ */}
+                        <div className="absolute top-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-xs text-white">
+                          <Zap className="h-3 w-3 text-yellow-400" />
+                          {(img.likeCount ?? 0).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="p-3 space-y-2">
+                        {/* キーワード */}
+                        {img.keyword && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                            <Hash className="h-3 w-3" />{img.keyword}
+                          </span>
+                        )}
+                        {/* 投稿テキスト */}
+                        {img.contentText && (
+                          <p className="text-xs text-muted-foreground line-clamp-2">{img.contentText}</p>
+                        )}
+                        {/* AI分析 */}
+                        {img.analysisText ? (
+                          <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5">
+                            <p className="text-xs font-medium text-primary mb-1 flex items-center gap-1">
+                              <Sparkles className="h-3 w-3" /> バズ理由 AI分析
+                            </p>
+                            <p className="text-xs text-foreground/80 leading-relaxed">{img.analysisText}</p>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-border bg-muted/30 p-2.5">
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Loader2 className="h-3 w-3 animate-spin" /> 分析中...
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+// Sparkles は lucide-react からのインポートが必要
+function Sparkles({ className }: { className?: string }) {
+  return (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+      <path d="M5 3v4"/><path d="M3 5h4"/><path d="M19 17v4"/><path d="M17 19h4"/>
+    </svg>
   );
 }

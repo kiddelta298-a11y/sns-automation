@@ -59,4 +59,10 @@ export const INDUSTRY_PRESETS = [
     description: "デザイン、クリエイティブ、動画制作",
     keywords: ["デザイン", "クリエイター", "動画", "イラスト", "写真", "Figma"],
   },
+  {
+    name: "アダルト",
+    slug: "adult",
+    description: "R18、官能、大人向けコンテンツ",
+    keywords: ["R18", "官能", "大人向け", "セクシー", "アダルト", "18禁", "エロ"],
+  },
 ] as const;

@@ -16,14 +16,24 @@ import {
   LogOut,
   Tags,
   Zap,
+  FlaskConical,
+  Trophy,
+  Layers,
+  Sparkles,
+  Brain,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getErrorPosts } from "@/lib/api";
 
 const navItems = [
   { href: "/",           label: "ダッシュボード",   icon: LayoutDashboard },
+  { href: "/mentor",     label: "X-Mentor",         icon: Sparkles },
+  { href: "/x-algorithm", label: "Xアルゴリズム",   icon: Brain },
   { href: "/trends",     label: "トレンド分析",     icon: TrendingUp },
   { href: "/keywords",   label: "キーワード収集",   icon: Tags },
+  { href: "/research",   label: "ジャンル別リサーチ", icon: FlaskConical },
+  { href: "/performance", label: "パフォーマンス",   icon: Trophy },
+  { href: "/account-groups", label: "マルチアカウント", icon: Layers },
   { href: "/posts",      label: "投稿一覧",         icon: FileText },
   { href: "/posts/new",  label: "新規投稿",         icon: PlusCircle },
   { href: "/calendar",   label: "カレンダー",       icon: CalendarDays },

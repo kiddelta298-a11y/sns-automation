@@ -37,3 +37,23 @@ export const generateDraftsQueue = new Queue("generate-drafts", {
     removeOnFail: { age: 30 * 24 * 3600 },
   },
 });
+
+// ジャンル別リサーチ分析ジョブキュー
+export const analyzeGenreQueue = new Queue("analyze-genre", {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 1,
+    removeOnComplete: { age: 7 * 24 * 3600 },
+    removeOnFail: { age: 30 * 24 * 3600 },
+  },
+});
+
+// 参考アカウント定期監視ジョブキュー
+export const monitorAccountsQueue = new Queue("monitor-accounts", {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 1,
+    removeOnComplete: { age: 7 * 24 * 3600 },
+    removeOnFail: { age: 30 * 24 * 3600 },
+  },
+});

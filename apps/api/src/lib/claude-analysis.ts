@@ -14,19 +14,24 @@ function getGemini() {
 // バズスコア上位の投稿を取得してGeminiに分析させる
 // ============================================================
 export async function runTrendAnalysis(jobId: string, sourceId: string) {
-  // スコア上位100件を取得
-  const topPosts = await db.query.trendPosts.findMany({
+  // 全投稿を取得（buzz_scoreが0でもlike_count順でフォールバック）
+  const allJobPosts = await db.query.trendPosts.findMany({
     where: eq(trendPosts.jobId, jobId),
-    orderBy: [desc(trendPosts.buzzScore)],
-    limit: 100,
+    orderBy: [desc(trendPosts.buzzScore), desc(trendPosts.likeCount)],
+    limit: 500,
   });
 
-  if (topPosts.length === 0) throw new Error("No posts found for analysis");
+  if (allJobPosts.length === 0) throw new Error("No posts found for analysis");
 
-  // Gemini に渡す投稿サンプル（上位30件の本文）
-  const samples = topPosts.slice(0, 30).map((p, i) => {
+  // 分析にはより多くの投稿をサンプリング（上位100件）
+  const topPosts = allJobPosts.slice(0, 100);
+
+  // Gemini に渡す投稿サンプル（上位50件の本文）
+  const samples = topPosts.slice(0, 50).map((p, i) => {
     const engRate = (p.engagementRate * 100).toFixed(2);
-    return `[${i + 1}] バズスコア:${p.buzzScore.toFixed(3)} エンゲージ率:${engRate}% フォーマット:${p.postFormat ?? "不明"} 文字数:${p.charCount}\n${p.contentText}`;
+    const likes = p.likeCount > 0 ? ` いいね:${p.likeCount}` : "";
+    const reposts = p.repostCount > 0 ? ` リポスト:${p.repostCount}` : "";
+    return `[${i + 1}] フォーマット:${p.postFormat ?? "不明"} 文字数:${p.charCount}${likes}${reposts}\n${p.contentText}`;
   }).join("\n\n---\n\n");
 
   // フォーマット分布の集計
@@ -54,9 +59,9 @@ export async function runTrendAnalysis(jobId: string, sourceId: string) {
 
   const prompt = `
 あなたはSNSのバズ投稿を分析するエキスパートです。
-Threadsのバズ投稿${topPosts.length}件を分析し、勝ちパターンをJSON形式で返してください。
+Threadsの投稿${allJobPosts.length}件（うち分析対象${topPosts.length}件）を分析し、勝ちパターンをJSON形式で返してください。
 
-## バズ投稿サンプル（上位30件）
+## 投稿サンプル（${Math.min(50, topPosts.length)}件）
 
 ${samples}
 

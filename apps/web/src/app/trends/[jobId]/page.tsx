@@ -80,6 +80,7 @@ export default function TrendJobPage({ params }: { params: Promise<{ jobId: stri
   const [editingText, setEditingText] = useState("");
   const [postingDraftId, setPostingDraftId] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [displayCount, setDisplayCount] = useState(30);
 
   useEffect(() => {
     (async () => {
@@ -103,10 +104,11 @@ export default function TrendJobPage({ params }: { params: Promise<{ jobId: stri
   }, [jobId]);
 
   useEffect(() => {
-    getTrendRanking({ industryId: job?.industryId ?? "", jobId, metric, limit: 30 })
+    getTrendRanking({ industryId: job?.industryId ?? "", jobId, metric, limit: 2000 })
       .then(res => {
         setPosts(res.posts);
         setFormatDist(res.formatDistribution);
+        setDisplayCount(30);
       })
       .catch(() => {});
   }, [job?.industryId, jobId, metric]);
@@ -260,56 +262,92 @@ export default function TrendJobPage({ params }: { params: Promise<{ jobId: stri
             </Card>
           )}
 
+          {/* 投稿件数 */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              全 {posts.length} 件中 {Math.min(displayCount, posts.length)} 件表示
+            </p>
+          </div>
+
           {/* 投稿一覧 */}
           <div className="space-y-3">
-            {posts.map((post, i) => (
-              <Card key={post.id} className="overflow-hidden">
-                <div className="flex gap-4 p-4">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold text-muted-foreground">
-                    {i + 1}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="rounded-full bg-accent px-2 py-0.5 text-xs text-muted-foreground">
-                        {FORMAT_LABELS[post.postFormat ?? "other"] ?? "その他"}
-                      </span>
-                      <span className="text-xs text-muted-foreground">{post.charCount}文字</span>
-                      {post.authorUsername && (
-                        <span className="text-xs text-muted-foreground">@{post.authorUsername}</span>
-                      )}
+            {posts.slice(0, displayCount).map((post, i) => {
+              const postUrl = post.platformPostId
+                ? `https://www.threads.com${post.platformPostId.startsWith("/") ? "" : "/"}${post.platformPostId}`
+                : post.authorUsername
+                  ? `https://www.threads.com/@${post.authorUsername}`
+                  : null;
+              return (
+                <Card key={post.id} className="overflow-hidden">
+                  <div className="flex gap-4 p-4">
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold text-muted-foreground">
+                      {i + 1}
                     </div>
-                    <p className="text-sm text-foreground whitespace-pre-line leading-relaxed">
-                      {post.contentText}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Heart className="h-3.5 w-3.5" />
-                        {formatNumber(post.likeCount)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Repeat2 className="h-3.5 w-3.5" />
-                        {formatNumber(post.repostCount)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        {formatNumber(post.replyCount)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Eye className="h-3.5 w-3.5" />
-                        {formatNumber(post.viewCount)}
-                      </span>
-                      <span className="ml-auto font-medium text-primary">
-                        バズスコア: {post.buzzScore.toFixed(4)}
-                      </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <span className="rounded-full bg-accent px-2 py-0.5 text-xs text-muted-foreground">
+                          {FORMAT_LABELS[post.postFormat ?? "other"] ?? "その他"}
+                        </span>
+                        <span className="text-xs text-muted-foreground">{post.charCount}文字</span>
+                        {post.authorUsername && (
+                          <span className="text-xs text-muted-foreground">@{post.authorUsername}</span>
+                        )}
+                        {postUrl && (
+                          <a
+                            href={postUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline ml-auto"
+                          >
+                            元投稿を開く ↗
+                          </a>
+                        )}
+                      </div>
+                      <p className="text-sm text-foreground whitespace-pre-line leading-relaxed">
+                        {post.contentText}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Heart className="h-3.5 w-3.5" />
+                          {formatNumber(post.likeCount)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Repeat2 className="h-3.5 w-3.5" />
+                          {formatNumber(post.repostCount)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <MessageSquare className="h-3.5 w-3.5" />
+                          {formatNumber(post.replyCount)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Eye className="h-3.5 w-3.5" />
+                          {formatNumber(post.viewCount)}
+                        </span>
+                        <span className="ml-auto font-medium text-primary">
+                          バズスコア: {post.buzzScore.toFixed(4)}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
             {posts.length === 0 && (
               <p className="py-12 text-center text-sm text-muted-foreground">
                 投稿データがありません
               </p>
+            )}
+            {displayCount < posts.length && (
+              <div className="flex justify-center pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setDisplayCount(prev => Math.min(prev + 50, posts.length))}
+                  className="gap-2"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                  さらに50件表示（残り {posts.length - displayCount} 件）
+                </Button>
+              </div>
             )}
           </div>
         </div>

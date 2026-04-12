@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -11,6 +12,7 @@ import {
   scheduledPosts,
   posts,
   accounts,
+  collectedImages,
 } from "../db/schema.js";
 import {
   startCollectionSchema,
@@ -121,6 +123,74 @@ trendsRouter.get("/jobs", async (c) => {
     with: { industry: true },
   });
   return c.json(jobs);
+});
+
+// ============================================================
+// GET /api/trends/jobs/:id/stream — SSEリアルタイム進捗ストリーム
+// ============================================================
+trendsRouter.get("/jobs/:id/stream", async (c) => {
+  const id = c.req.param("id");
+  // SSEはCORSヘッダーを個別に設定
+  c.header("Access-Control-Allow-Origin", "*");
+  c.header("Cache-Control", "no-cache");
+
+  return streamSSE(c, async (stream) => {
+    // 最大10分（600回 × 1秒）監視
+    for (let tick = 0; tick < 600; tick++) {
+      if (stream.aborted) break;
+
+      try {
+        const job = await db.query.collectionJobs.findFirst({
+          where: eq(collectionJobs.id, id),
+        });
+        if (!job) {
+          await stream.writeSSE({ data: JSON.stringify({ error: "not found" }), event: "error" });
+          break;
+        }
+
+        await stream.writeSSE({
+          data: JSON.stringify({
+            id: job.id,
+            status: job.status,
+            collectedCount: job.collectedCount,
+            targetCount: job.targetCount,
+            // running中はerrorMessageを進捗メッセージとして流用
+            statusMessage: job.status === "running" ? (job.errorMessage ?? null) : null,
+            errorMessage: job.status === "failed" ? job.errorMessage : null,
+            startedAt: job.startedAt,
+            completedAt: job.completedAt,
+          }),
+          event: "update",
+        });
+
+        if (job.status === "completed" || job.status === "failed") break;
+      } catch {
+        break;
+      }
+
+      await stream.sleep(1000);
+    }
+  });
+});
+
+// ============================================================
+// GET /api/trends/images — 収集した画像一覧
+// ============================================================
+trendsRouter.get("/images", async (c) => {
+  const { jobId, keywordSetId, limit = "20" } = c.req.query();
+  const limitNum = Math.min(Number(limit) || 20, 100);
+
+  const conditions = [];
+  if (jobId) conditions.push(eq(collectedImages.jobId, jobId));
+  if (keywordSetId) conditions.push(eq(collectedImages.keywordSetId, keywordSetId));
+
+  const rows = await db.query.collectedImages.findMany({
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    orderBy: [desc(collectedImages.buzzScore), desc(collectedImages.likeCount)],
+    limit: limitNum,
+  });
+
+  return c.json(rows);
 });
 
 // ============================================================

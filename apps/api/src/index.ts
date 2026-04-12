@@ -19,6 +19,9 @@ import { settingsRouter } from "./routes/settings.js";
 import { uploadsRouter, serveUpload } from "./routes/uploads.js";
 import { campaignsRouter } from "./routes/campaigns.js";
 import { keywordSetsRouter } from "./routes/keyword-sets.js";
+import { researchRouter } from "./routes/research.js";
+import { accountGroupsRouter } from "./routes/account-groups.js";
+import { mentorRouter } from "./routes/mentor.js";
 import { handleError } from "./lib/errors.js";
 
 const app = new Hono();
@@ -50,6 +53,15 @@ app.route("/api/campaigns", campaignsRouter);
 
 // Custom keyword sets
 app.route("/api/keyword-sets", keywordSetsRouter);
+
+// Genre research
+app.route("/api/research", researchRouter);
+
+// Account groups & bulk posting
+app.route("/api/account-groups", accountGroupsRouter);
+
+// X Mentor (x-mastery-mentor skill)
+app.route("/api/mentor", mentorRouter);
 
 // Uploads API
 app.route("/api/uploads", uploadsRouter);
