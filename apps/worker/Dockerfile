@@ -4,9 +4,8 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
-COPY package.json ./
-COPY package-lock.json ./
-RUN ls -la /app && npm ci
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
 RUN npm run build
