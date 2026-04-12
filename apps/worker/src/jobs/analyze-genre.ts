@@ -8,7 +8,7 @@ import { ThreadsScraper, calcBuzzScore } from "../browser/threads-scraper.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-export const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
+export const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null }) as any;
 
 // ── ローカルスキーマ定義 ──────────────────────────────────────────────────────
 const referenceAccounts = pgTable("reference_accounts", {
