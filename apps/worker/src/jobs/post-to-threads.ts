@@ -7,9 +7,11 @@ import { ThreadsBrowser, type ThreadsPostResult } from "../browser/threads.js";
 // ---------------------------------------------------------------
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
+// Cast to any: bullmq's ConnectionOptions expects newer ioredis type with
+// Redis 7.4+ commands (hgetdel, hexpireat, etc.) that we don't use.
 export const connection = new IORedis(REDIS_URL, {
   maxRetriesPerRequest: null,
-});
+}) as any;
 
 // ---------------------------------------------------------------
 // キュー定義
