@@ -43,7 +43,13 @@ const navItems = [
   { href: "/settings",   label: "設定",             icon: Settings },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  open?: boolean;
+  desktopOpen?: boolean;
+  onClose?: () => void;
+}
+
+export function Sidebar({ open = false, desktopOpen = true, onClose }: SidebarProps = {}) {
   const pathname = usePathname();
   const router  = useRouter();
   const [errorCount, setErrorCount] = useState(0);
@@ -62,7 +68,23 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="fixed left-0 top-0 z-30 flex h-screen w-64 flex-col"
+    <>
+      {/* モバイル用オーバーレイ */}
+      <div
+        onClick={onClose}
+        aria-hidden="true"
+        className={cn(
+          "fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-200 md:hidden",
+          open ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+      />
+
+    <aside
+      className={cn(
+        "fixed left-0 top-0 z-50 flex h-screen w-64 flex-col transition-transform duration-200 ease-out",
+        open ? "translate-x-0" : "-translate-x-full",
+        desktopOpen ? "md:translate-x-0" : "md:-translate-x-full",
+      )}
       style={{
         background: "linear-gradient(180deg, rgba(13,10,25,0.98) 0%, rgba(10,8,20,0.98) 100%)",
         borderRight: "1px solid rgba(139,92,246,0.12)",
@@ -175,5 +197,6 @@ export function Sidebar() {
         </button>
       </div>
     </aside>
+    </>
   );
 }
