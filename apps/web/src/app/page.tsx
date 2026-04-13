@@ -114,7 +114,47 @@ export default async function DashboardPage() {
               すべて表示 →
             </Link>
           </div>
-          <div className="overflow-x-auto">
+          {/* モバイル: カード表示 */}
+          <div className="divide-y md:hidden" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+            {recentPosts.length === 0 ? (
+              <p className="px-4 py-10 text-center text-sm" style={{ color: "rgba(240,238,255,0.3)" }}>
+                投稿がありません
+              </p>
+            ) : recentPosts.map((post) => {
+              const clicks = post.redirectLinks?.reduce((s, l) => s + l.clickCount, 0) ?? 0;
+              const views  = post.postMetrics?.length ? (post.postMetrics[0].views ?? 0) : null;
+              return (
+                <Link
+                  key={post.id}
+                  href={`/posts/${post.id}`}
+                  className="block px-4 py-3.5"
+                  style={{ borderColor: "rgba(255,255,255,0.04)" }}
+                >
+                  <div className="flex items-start gap-3">
+                    <PlatformIcon platform={post.platform as Platform} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm leading-snug" style={{ color: "rgba(240,238,255,0.88)" }}>
+                        {(post.contentText ?? "").slice(0, 80)}
+                        {(post.contentText ?? "").length > 80 ? "…" : ""}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]"
+                        style={{ color: "rgba(240,238,255,0.55)" }}>
+                        <StatusBadge status={post.status as PostStatus} />
+                        <span>クリック {formatNumber(clicks)}</span>
+                        <span>表示 {views !== null ? formatNumber(views) : "—"}</span>
+                        <span className="ml-auto" style={{ color: "rgba(240,238,255,0.35)" }}>
+                          {formatDate(post.createdAt)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* PC: テーブル表示 */}
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>

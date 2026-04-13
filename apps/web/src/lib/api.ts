@@ -41,12 +41,21 @@ export interface ApiPostMetrics {
   profileVisits: number | null;
 }
 
+export interface ApiProxyConfig {
+  server: string;
+  username?: string;
+  password?: string;
+  label?: string;
+}
+
 export interface ApiAccount {
   id: string;
   platform: string;
   username: string;
   displayName: string | null;
   status: string;
+  hasSession?: boolean;
+  proxyConfig?: ApiProxyConfig | null;
 }
 
 // ---- Posts ----
@@ -124,6 +133,34 @@ export function deleteAccount(id: string) {
   return apiFetch<{ success: boolean }>(`/api/accounts/${id}`, {
     method: "DELETE",
   });
+}
+
+export function updateAccountProxy(id: string, proxyConfig: ApiProxyConfig | null) {
+  return apiFetch<ApiAccount>(`/api/accounts/${id}/proxy`, {
+    method: "PUT",
+    body: JSON.stringify({ proxyConfig }),
+  });
+}
+
+export function testAccountProxy(id: string) {
+  return apiFetch<{ ok: boolean; ip?: string; error?: string }>(
+    `/api/accounts/${id}/proxy/test`,
+    { method: "POST" },
+  );
+}
+
+export function uploadAccountSession(id: string, storageState: Record<string, unknown>) {
+  return apiFetch<{ ok: boolean; account: ApiAccount }>(
+    `/api/accounts/${id}/session`,
+    { method: "POST", body: JSON.stringify({ storageState }) },
+  );
+}
+
+export function deleteAccountSession(id: string) {
+  return apiFetch<{ ok: boolean; account: ApiAccount }>(
+    `/api/accounts/${id}/session`,
+    { method: "DELETE" },
+  );
 }
 
 export interface ApiScheduledPost {
@@ -319,6 +356,38 @@ export function analyzeJob(jobId: string) {
 
 export function getWinningPattern(jobId: string) {
   return apiFetch<ApiWinningPattern>(`/api/trends/patterns/${jobId}`);
+}
+
+// ---- Knowledge (PDCA 勝ちワードランキング) ----
+
+export interface ApiBuzzKeyword {
+  id: string;
+  industryId: string | null;
+  keyword: string;
+  occurrences: number;
+  totalBuzzScore: number;
+  postCount: number;
+  avgBuzzScore: number;
+  jobCount: number;
+  winScore: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  industry?: ApiIndustry;
+}
+
+export function getKnowledge(params: {
+  industryId?: string;
+  sortBy?: "winScore" | "occurrences" | "avgBuzz" | "recent";
+  limit?: number;
+}) {
+  const qs = new URLSearchParams();
+  if (params.industryId) qs.set("industryId", params.industryId);
+  if (params.sortBy) qs.set("sortBy", params.sortBy);
+  if (params.limit) qs.set("limit", String(params.limit));
+  return apiFetch<{
+    keywords: ApiBuzzKeyword[];
+    summary: { totalKeywords: number; totalJobs: number; avgWinScore: number };
+  }>(`/api/trends/knowledge?${qs}`);
 }
 
 export function generateDrafts(jobId: string, seed?: string, count = 3) {

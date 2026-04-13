@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { eq, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { trendPosts, winningPatterns, generatedDrafts } from "../db/schema.js";
+import { upsertBuzzKeywords } from "./keyword-extraction.js";
 
 function getGemini() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -119,6 +120,19 @@ JSONのみ出力してください。
     topPostSamples: topPosts.slice(0, 5).map(p => p.contentText),
     sampleCount: topPosts.length,
   }).returning();
+
+  // PDCA ナレッジ: 上位100投稿からキーワード抽出して buzz_keywords に累積
+  try {
+    await upsertBuzzKeywords({
+      industryId: sourceId || null,
+      posts: topPosts.map((p) => ({
+        text: p.contentText as string,
+        buzzScore: p.buzzScore,
+      })),
+    });
+  } catch (err) {
+    console.error("[buzz-keywords] upsert failed:", err);
+  }
 
   return pattern;
 }

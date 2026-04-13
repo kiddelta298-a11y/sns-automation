@@ -108,23 +108,25 @@ export default function MetricsPage({ params }: { params: Promise<{ jobId: strin
   return (
     <div className="space-y-8">
       {/* ヘッダー */}
-      <div className="flex items-center gap-3">
-        <Link href="/trends" className="rounded-lg p-1.5 hover:bg-muted transition-colors">
-          <ArrowLeft className="h-5 w-5 text-muted-foreground" />
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-primary" />
-            {metrics.job.industry?.name} — 分析レポート
-          </h1>
-          <p className="text-sm text-muted-foreground">{summary.totalPosts}件の投稿を分析</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-3">
+          <Link href="/trends" className="rounded-lg p-1.5 hover:bg-muted transition-colors">
+            <ArrowLeft className="h-5 w-5 text-muted-foreground" />
+          </Link>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg sm:text-xl font-bold text-foreground flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-primary shrink-0" />
+              <span className="truncate">{metrics.job.industry?.name} — 分析レポート</span>
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">{summary.totalPosts}件の投稿を分析</p>
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 sm:ml-auto">
           <button
             onClick={handleAnalyze}
             disabled={analyzing || !!pattern}
             className={cn(
-              "flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+              "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors sm:flex-none",
               pattern
                 ? "bg-muted text-muted-foreground cursor-default"
                 : "bg-primary text-primary-foreground hover:bg-primary/90",
@@ -135,7 +137,7 @@ export default function MetricsPage({ params }: { params: Promise<{ jobId: strin
           </button>
           <button
             onClick={() => router.push(`/trends/${jobId}`)}
-            className="flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors sm:flex-none"
           >
             投稿生成へ <ChevronRight className="h-4 w-4" />
           </button>
@@ -252,7 +254,7 @@ export default function MetricsPage({ params }: { params: Promise<{ jobId: strin
         {/* ── 頻出キーワード ── */}
         <section>
           <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-foreground">
-            <Hash className="h-5 w-5 text-primary" /> バズ投稿の頻出キーワード TOP 20
+            <Hash className="h-5 w-5 text-primary" /> バズ投稿の頻出ワード TOP 20
           </h2>
           <div className="rounded-xl border border-border bg-card p-4">
             <div className="flex flex-wrap gap-2">

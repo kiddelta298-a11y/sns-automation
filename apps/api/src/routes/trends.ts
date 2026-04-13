@@ -13,6 +13,7 @@ import {
   posts,
   accounts,
   collectedImages,
+  buzzKeywords,
 } from "../db/schema.js";
 import {
   startCollectionSchema,
@@ -386,6 +387,45 @@ trendsRouter.patch("/drafts/:id", async (c) => {
     .returning();
 
   return c.json(updated);
+});
+
+// ============================================================
+// GET /api/trends/knowledge — 蓄積された勝ちワード知見（PDCA）
+// ============================================================
+trendsRouter.get("/knowledge", async (c) => {
+  const industryId = c.req.query("industryId");
+  const sortBy = c.req.query("sortBy") ?? "winScore"; // winScore | occurrences | avgBuzz | recent
+  const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
+
+  const conditions = industryId ? [eq(buzzKeywords.industryId, industryId)] : [];
+
+  const orderBy =
+    sortBy === "occurrences" ? desc(buzzKeywords.occurrences) :
+    sortBy === "avgBuzz"     ? desc(buzzKeywords.avgBuzzScore) :
+    sortBy === "recent"      ? desc(buzzKeywords.lastSeenAt) :
+                               desc(buzzKeywords.winScore);
+
+  const rows = await db.query.buzzKeywords.findMany({
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    orderBy: [orderBy],
+    limit,
+    with: { industry: true },
+  });
+
+  // 全件サマリー
+  const totalsQuery = await db
+    .select({
+      totalKeywords: sql<number>`count(*)::int`,
+      totalJobs:     sql<number>`coalesce(max(${buzzKeywords.jobCount}), 0)::int`,
+      avgWinScore:   sql<number>`coalesce(avg(${buzzKeywords.winScore}), 0)::float`,
+    })
+    .from(buzzKeywords)
+    .where(industryId ? eq(buzzKeywords.industryId, industryId) : undefined);
+
+  return c.json({
+    keywords: rows,
+    summary: totalsQuery[0] ?? { totalKeywords: 0, totalJobs: 0, avgWinScore: 0 },
+  });
 });
 
 // ============================================================

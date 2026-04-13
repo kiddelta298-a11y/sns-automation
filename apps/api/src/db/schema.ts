@@ -502,6 +502,51 @@ export const winningPatternsRelations = relations(winningPatterns, ({ one, many 
 }));
 
 // ============================================================
+// buzz_keywords（バズ投稿ナレッジDB: キーワード×業界の累積知見）
+// ============================================================
+// 各ジョブ分析時に抽出された頻出ワードをここに累積して、
+// 業界ごとの「勝ちワード」ランキングを時系列で育てる。PDCA基盤。
+export const buzzKeywords = pgTable(
+  "buzz_keywords",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    industryId: uuid("industry_id").references(() => industries.id),
+    keywordSetId: uuid("keyword_set_id").references(() => keywordSets.id),
+    keyword: varchar("keyword", { length: 100 }).notNull(),
+    // 登場回数（全ジョブ合算）
+    occurrences: integer("occurrences").notNull().default(0),
+    // このワードを含むバズ投稿の合計スコア（平均算出の分子）
+    totalBuzzScore: real("total_buzz_score").notNull().default(0),
+    // このワードが登場したバズ投稿の件数（平均算出の分母）
+    postCount: integer("post_count").notNull().default(0),
+    // 平均バズスコア（= totalBuzzScore / postCount）
+    avgBuzzScore: real("avg_buzz_score").notNull().default(0),
+    // このワードを含んだジョブの数
+    jobCount: integer("job_count").notNull().default(0),
+    // PDCA: 勝ちワード判定スコア (occurrences × avgBuzzScore)
+    winScore: real("win_score").notNull().default(0),
+    firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("uniq_buzz_keyword_industry").on(t.industryId, t.keyword),
+    index("idx_buzz_keywords_winscore").on(t.industryId, t.winScore),
+    index("idx_buzz_keywords_lastseen").on(t.lastSeenAt),
+  ],
+);
+
+export const buzzKeywordsRelations = relations(buzzKeywords, ({ one }) => ({
+  industry: one(industries, {
+    fields: [buzzKeywords.industryId],
+    references: [industries.id],
+  }),
+  keywordSet: one(keywordSets, {
+    fields: [buzzKeywords.keywordSetId],
+    references: [keywordSets.id],
+  }),
+}));
+
+// ============================================================
 // generated_drafts（AI生成投稿文案）
 // ============================================================
 export const generatedDrafts = pgTable(

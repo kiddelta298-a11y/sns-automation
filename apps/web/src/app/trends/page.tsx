@@ -173,42 +173,78 @@ export default function TrendsPage() {
 
       {/* ── Step1: 業界選択 ── */}
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-          Step 1 — 業界を選択
-        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Step 1 — 業界を選択
+          </h2>
+          {selected && (
+            <span className="text-xs text-muted-foreground">
+              現在: <strong className="text-foreground">
+                {INDUSTRY_EMOJI[selected.slug] ?? "📌"} {selected.name}
+              </strong>
+            </span>
+          )}
+        </div>
         {loadingIndustries ? (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2 className="h-4 w-4 animate-spin" /> 読み込み中...
           </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {industries.map(ind => (
-              <button
-                key={ind.id}
-                onClick={() => setSelected(ind)}
-                disabled={isRunning}
-                className={cn(
-                  "relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 text-center transition-all",
-                  "hover:border-primary/60 hover:bg-accent/50",
-                  "disabled:opacity-50 disabled:cursor-not-allowed",
-                  selected?.id === ind.id
-                    ? "border-primary bg-primary/5 shadow-sm"
-                    : "border-border bg-card",
-                )}
-              >
-                <span className="text-2xl">{INDUSTRY_EMOJI[ind.slug] ?? "📌"}</span>
-                <span className={cn(
-                  "text-xs font-medium leading-tight",
-                  selected?.id === ind.id ? "text-primary" : "text-foreground",
-                )}>
-                  {ind.name}
-                </span>
-                {selected?.id === ind.id && (
-                  <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" />
-                )}
-              </button>
-            ))}
+        ) : industries.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+            業界プリセットがありません。ページを再読み込みしてください。
           </div>
+        ) : (
+          <>
+            {/* モバイル用: ネイティブ select（確実に動く） */}
+            <div className="sm:hidden">
+              <select
+                value={selected?.id ?? ""}
+                onChange={(e) => {
+                  const ind = industries.find((i) => i.id === e.target.value);
+                  if (ind) setSelected(ind);
+                }}
+                className="w-full rounded-xl border-2 border-border bg-card px-4 py-3 text-base font-medium text-foreground focus:border-primary focus:outline-none"
+              >
+                {industries.map((ind) => (
+                  <option key={ind.id} value={ind.id}>
+                    {INDUSTRY_EMOJI[ind.slug] ?? "📌"} {ind.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                {industries.length} 業界から選択可能 — PC版と同じプリセットが使えます
+              </p>
+            </div>
+
+            {/* PC用: グリッドで視覚的に選択 */}
+            <div className="hidden grid-cols-2 gap-3 sm:grid sm:grid-cols-3 lg:grid-cols-5">
+              {industries.map(ind => (
+                <button
+                  key={ind.id}
+                  type="button"
+                  onClick={() => setSelected(ind)}
+                  className={cn(
+                    "relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 text-center transition-all",
+                    "hover:border-primary/60 hover:bg-accent/50",
+                    selected?.id === ind.id
+                      ? "border-primary bg-primary/5 shadow-sm"
+                      : "border-border bg-card",
+                  )}
+                >
+                  <span className="text-2xl">{INDUSTRY_EMOJI[ind.slug] ?? "📌"}</span>
+                  <span className={cn(
+                    "text-xs font-medium leading-tight",
+                    selected?.id === ind.id ? "text-primary" : "text-foreground",
+                  )}>
+                    {ind.name}
+                  </span>
+                  {selected?.id === ind.id && (
+                    <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </>
         )}
       </section>
 
@@ -218,16 +254,17 @@ export default function TrendsPage() {
           <h2 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
             Step 2 — 収集を実行
           </h2>
-          <div className="rounded-xl border border-border bg-card p-5">
-            <div className="flex items-start justify-between gap-6">
-              <div className="space-y-2">
+          <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+              <div className="min-w-0 flex-1 space-y-2">
                 <p className="font-semibold text-foreground">
                   {INDUSTRY_EMOJI[selected.slug] ?? "📌"} {selected.name}
                 </p>
                 <div className="flex flex-wrap gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">検索ワード</span>
                   {(selected.keywords as string[]).map(kw => (
                     <span key={kw} className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
-                      #{kw}
+                      {kw}
                     </span>
                   ))}
                 </div>
@@ -275,7 +312,7 @@ export default function TrendsPage() {
                         <select
                           value={igAccountId}
                           onChange={(e) => setIgAccountId(e.target.value)}
-                          className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                          className="w-full max-w-xs rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           {igAccounts.map((a) => (
                             <option key={a.id} value={a.id}>@{a.username}</option>
@@ -290,7 +327,7 @@ export default function TrendsPage() {
                 onClick={handleStart}
                 disabled={collecting || isRunning}
                 className={cn(
-                  "flex shrink-0 items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold transition-all",
+                  "flex w-full shrink-0 items-center justify-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold transition-all sm:w-auto",
                   "focus:outline-none focus:ring-2 focus:ring-primary/40",
                   collecting || isRunning
                     ? "bg-muted text-muted-foreground cursor-not-allowed"
@@ -445,7 +482,7 @@ export default function TrendsPage() {
             const pct = Math.min(100, Math.round(job.collectedCount / job.targetCount * 100));
             const slug = job.industry?.slug ?? "";
             return (
-              <div key={job.id} className="flex items-center gap-4 px-5 py-4">
+              <div key={job.id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:gap-4 sm:px-5 sm:py-4">
                 {job.status === "completed" ? <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
                  : job.status === "failed"   ? <XCircle     className="h-5 w-5 shrink-0 text-red-500" />
                  : job.status === "running"  ? <Loader2     className="h-5 w-5 shrink-0 text-blue-500 animate-spin" />
@@ -511,7 +548,7 @@ export default function TrendsPage() {
             {jobs.map(job => {
               const pct = Math.min(100, Math.round(job.collectedCount / job.targetCount * 100));
               return (
-                <div key={job.id} className="flex items-center gap-4 px-5 py-4">
+                <div key={job.id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:gap-4 sm:px-5 sm:py-4">
                   {job.status === "completed" ? <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
                    : job.status === "failed"   ? <XCircle     className="h-5 w-5 shrink-0 text-red-500" />
                    : job.status === "running"  ? <Loader2     className="h-5 w-5 shrink-0 text-blue-500 animate-spin" />
