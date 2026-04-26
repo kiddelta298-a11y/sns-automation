@@ -1,7 +1,8 @@
-import { lte, eq, and, inArray } from "drizzle-orm";
+import { lte, eq, and, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { threadsPostQueue } from "./post-to-threads.js";
 import { instagramPostQueue } from "./post-to-instagram.js";
+import { stripExternalLinks } from "../browser/threads.js";
 
 const CHECK_INTERVAL_MS = 60_000; // 1分ごとに確認
 const MAX_RETRY = 3;
@@ -12,18 +13,17 @@ const MAX_RETRY = 3;
 async function executePendingPosts(): Promise<void> {
   const db = getDb();
 
-  // DB スキーマをインライン定義（workerはAPIのschema.tsを直接参照できないため）
-  const { sql } = await import("drizzle-orm");
-
   const rows = await db.execute(sql`
     SELECT
       sp.id        AS scheduled_id,
       sp.post_id,
       sp.retry_count,
+      sp.scheduled_at,
       p.platform,
       p.content_text,
       p.link_url,
       p.metadata,
+      a.id         AS account_id,
       a.username,
       a.credentials,
       a.proxy_config
@@ -59,34 +59,54 @@ async function executePendingPosts(): Promise<void> {
       continue;
     }
 
-    // processing に更新してキューへ投入
+    // processing に更新してキューへ投入（進捗リセット）
     await db.execute(sql`
       UPDATE scheduled_posts
-      SET status = 'processing', retry_count = retry_count + 1
+      SET status = 'processing', retry_count = retry_count + 1,
+          started_at = NOW(), current_stage = 'login', progress_pct = 0
       WHERE id = ${scheduledId}
     `);
 
-    const credentials = row.credentials as Record<string, string>;
+    const credentials = row.credentials as Record<string, unknown>;
+    const storageState = credentials.storageState as Record<string, unknown> | undefined;
     const proxyConfig = row.proxy_config as { server: string; username?: string; password?: string } | null;
     const headless = process.env.HEADLESS !== "false";
+    const accountId = row.account_id as string;
 
     try {
       if (platform === "threads") {
+        const sanitizedText = stripExternalLinks((row.content_text as string) ?? "");
+        if (!sanitizedText) {
+          await markFailed(scheduledId, postId, "Post text is empty after stripping external links");
+          continue;
+        }
+
         const job = await threadsPostQueue.add(
           `scheduled-${scheduledId}`,
           {
             postId,
+            accountId,
+            scheduledId,
             username: row.username as string,
-            password: credentials.password ?? "",
-            text: (row.content_text as string) ?? "",
+            password: (credentials.password as string) ?? "",
+            ...(storageState ? { storageState } : {}),
+            text: sanitizedText,
             headless,
             ...(proxyConfig ? { proxy: proxyConfig } : {}),
           },
           { jobId: `sched-threads-${scheduledId}` },
         );
 
-        // ジョブ完了を待たずに完了コールバックで更新（非同期）
-        void watchJobCompletion(job.id!, scheduledId, postId, "threads");
+        // post_history に pending レコード作成
+        await db.execute(sql`
+          INSERT INTO post_history (id, job_id, platform, content, scheduled_at, status, created_at, updated_at)
+          VALUES (gen_random_uuid(), ${job.id!}, 'threads', ${sanitizedText}, ${row.scheduled_at as string}, 'pending', NOW(), NOW())
+        `);
+
+        // ジョブ完了を待たずに完了コールバックで更新（非同期・エラーログ付き）
+        watchJobCompletion(job.id!, scheduledId, postId, "threads").catch((e) =>
+          console.error(`[scheduler] watchJobCompletion error for ${scheduledId}:`, e),
+        );
       } else if (platform === "instagram") {
         const metadata = (row.metadata as Record<string, unknown>) ?? {};
         const imagePaths = (metadata.imagePaths as string[]) ?? [];
@@ -110,7 +130,15 @@ async function executePendingPosts(): Promise<void> {
           { jobId: `sched-instagram-${scheduledId}` },
         );
 
-        void watchJobCompletion(job.id!, scheduledId, postId, "instagram");
+        // post_history に pending レコード作成
+        await db.execute(sql`
+          INSERT INTO post_history (id, job_id, platform, content, scheduled_at, status, created_at, updated_at)
+          VALUES (gen_random_uuid(), ${job.id!}, 'instagram', ${(row.content_text as string) ?? ""}, ${row.scheduled_at as string}, 'pending', NOW(), NOW())
+        `);
+
+        watchJobCompletion(job.id!, scheduledId, postId, "instagram").catch((e) =>
+          console.error(`[scheduler] watchJobCompletion error for ${scheduledId}:`, e),
+        );
       } else {
         await markFailed(scheduledId, postId, `Unsupported platform: ${platform}`);
       }
@@ -129,6 +157,7 @@ async function executePendingPosts(): Promise<void> {
 
 /**
  * BullMQ ジョブの完了を監視して DB を更新する
+ * 責務: status/progress のみ更新（executed_at/platform_post_id は post-to-threads.ts 側で記録）
  */
 async function watchJobCompletion(
   jobId: string,
@@ -144,25 +173,61 @@ async function watchJobCompletion(
   while (Date.now() - start < TIMEOUT_MS) {
     await new Promise((r) => setTimeout(r, POLL_MS));
 
-    const job = await queue.getJob(jobId);
-    if (!job) break;
+    let job;
+    try {
+      job = await queue.getJob(jobId);
+    } catch (e) {
+      console.warn(`[scheduler] getJob error for ${jobId}:`, e);
+      continue;
+    }
 
-    const state = await job.getState();
+    if (!job) {
+      // ジョブが Redis から削除済み（removeOnComplete で早期削除等）
+      // posts テーブルの status で成否を判断
+      const db = getDb();
+      const rows = await db.execute(sql`SELECT status FROM posts WHERE id = ${postId}`);
+      const postStatus = (rows[0]?.status as string) ?? "";
+      if (postStatus === "posted") {
+        // post-to-threads.ts 側で既に成功更新済み
+        await db.execute(sql`
+          UPDATE scheduled_posts
+          SET status = 'done', progress_pct = 100, current_stage = 'done'
+          WHERE id = ${scheduledId} AND status != 'done'
+        `);
+        console.log(`[scheduler] Job ${jobId} already completed (job removed from queue)`);
+      } else {
+        console.warn(`[scheduler] Job ${jobId} not found in queue, treating as timed out`);
+        await markFailed(scheduledId, postId, "Job not found in queue (possibly timed out)");
+      }
+      return;
+    }
+
+    let state: string;
+    try {
+      state = await job.getState();
+    } catch (e) {
+      console.warn(`[scheduler] getState error for ${jobId}:`, e);
+      continue;
+    }
 
     if (state === "completed") {
-      const db = getDb();
-      const { sql } = await import("drizzle-orm");
-      await db.execute(sql`
-        UPDATE scheduled_posts
-        SET status = 'done', executed_at = NOW()
-        WHERE id = ${scheduledId}
-      `);
-      await db.execute(sql`
-        UPDATE posts
-        SET status = 'posted', posted_at = NOW(), updated_at = NOW()
-        WHERE id = ${postId}
-      `);
-      console.log(`[scheduler] Post ${postId} posted successfully`);
+      try {
+        const db = getDb();
+        await db.execute(sql`
+          UPDATE scheduled_posts
+          SET status = 'done', progress_pct = 100, current_stage = 'done'
+          WHERE id = ${scheduledId}
+        `);
+        await db.execute(sql`
+          UPDATE posts
+          SET status = 'posted', posted_at = NOW(), updated_at = NOW()
+          WHERE id = ${postId}
+        `);
+        console.log(`[scheduler] Post ${postId} posted successfully`);
+      } catch (e) {
+        console.error(`[scheduler] DB update failed after job completion for ${scheduledId}:`, e);
+        throw e;
+      }
       return;
     }
 
@@ -179,7 +244,6 @@ async function watchJobCompletion(
 
 async function markFailed(scheduledId: string, postId: string, reason: string): Promise<void> {
   const db = getDb();
-  const { sql } = await import("drizzle-orm");
   await db.execute(sql`
     UPDATE scheduled_posts
     SET status = 'failed', error_message = ${reason}
