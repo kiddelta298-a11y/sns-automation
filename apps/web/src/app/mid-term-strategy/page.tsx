@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { TrendingUp, CheckCircle2, Circle, ChevronDown, ChevronRight, ArrowRight, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { IgStrategyContent } from "../ig-strategy/page";
+import { IgStrategyContent } from "@/components/strategy/ig-strategy-content";
 
 // ─── 型定義 ─────────────────────────────────────────────────
 

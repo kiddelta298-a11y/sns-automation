@@ -7,7 +7,7 @@ import {
   RotateCcw, Brain,
 } from "lucide-react";
 import { postMentorChat, type MentorMessage, type MentorScenario } from "@/lib/api";
-import { XAlgorithmContent } from "../x-algorithm/page";
+import { XAlgorithmContent } from "@/components/x/x-algorithm-content";
 
 // ─── シナリオ定義 ─────────────────────────────────────────────
 interface ScenarioTab {
