@@ -63,27 +63,35 @@ async function run() {
         .filter((s) => s.length > 0);
 
       console.log(`[migrate] applying: ${file} (${statements.length} statement(s))`);
-      try {
-        await sql.begin(async (tx) => {
-          for (const stmt of statements) {
-            const trimmed = stmt.replace(/;\s*$/, "").trim();
-            if (!trimmed) continue;
-            await tx.unsafe(trimmed);
+      // statement 単位で独立に実行する。「already exists」「duplicate」系は冪等とみなして続行し、
+      // それ以外のエラーで初めて中断する。トランザクションでまとめると、最初に existing でコケた
+      // 時点で同ファイル内の後続 CREATE TABLE もロールバックされ、ファイルが歯抜けで適用済み
+      // 扱いになる事故が起きるため、あえて per-statement で進める。
+      let fileFailed = false;
+      let skipped = 0;
+      let executed = 0;
+      for (const stmt of statements) {
+        const trimmed = stmt.replace(/;\s*$/, "").trim();
+        if (!trimmed) continue;
+        try {
+          await sql.unsafe(trimmed);
+          executed++;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (/already exists/i.test(msg) || /duplicate/i.test(msg)) {
+            skipped++;
+            continue;
           }
-          await tx.unsafe(`INSERT INTO _applied_migrations (filename) VALUES ('${file.replace(/'/g, "''")}')`);
-        });
-        console.log(`[migrate] OK: ${file}`);
-      } catch (e) {
-        // 既存DBに同じテーブルが存在するパターンに耐える: 「already exists」系は記録だけして続行
-        const msg = e instanceof Error ? e.message : String(e);
-        if (/already exists/i.test(msg) || /duplicate/i.test(msg)) {
-          console.warn(`[migrate] non-fatal (already exists): ${file} — ${msg}`);
-          await sql`INSERT INTO _applied_migrations (filename) VALUES (${file}) ON CONFLICT DO NOTHING`;
-        } else {
           console.error(`[migrate] failed on ${file}:`, e);
-          throw e;
+          fileFailed = true;
+          break;
         }
       }
+      if (fileFailed) {
+        throw new Error(`migration ${file} aborted`);
+      }
+      await sql`INSERT INTO _applied_migrations (filename) VALUES (${file}) ON CONFLICT DO NOTHING`;
+      console.log(`[migrate] OK: ${file} (executed=${executed}, skipped_existing=${skipped})`);
     }
 
     console.log("[migrate] all migrations applied");
