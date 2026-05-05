@@ -40,16 +40,19 @@ const SCREENSHOT_DIR = path.resolve(__dirname, "../../../data/uploads/post-scree
 const BASE_URL = "https://www.threads.com";
 
 // ---------------------------------------------------------------
-// 投稿テキストから外部リンクを除去する
+// 投稿テキストから外部リンク・Threads UI ノイズを除去する
 // ---------------------------------------------------------------
-// 抽出した他社投稿には外部URLが含まれることがあり、そのまま投稿すると
-// 自アカウントから他社サイトへトラフィックを流してしまう。
-// http(s) URL とスキームレスな www. URL を削除し、空白を圧縮する。
+// - 外部URL: 自アカウントから他社サイトへトラフィックを流さないため削除
+// - "Translate"/"翻訳を見る": Threads UI が末尾に注入するラベル
+// - "1/2"/"2/2" などの連投ページネーション: 元投稿の連投マーカー
 export function stripExternalLinks(text: string): string {
   if (!text) return text;
   return text
     .replace(/https?:\/\/\S+/gi, "")
     .replace(/(^|[\s(])www\.\S+/gi, "$1")
+    .replace(/(^|\s)(?:Translate|翻訳を見る|翻訳|See translation|Translated from \w+)(\s|$)/gi, "$1$2")
+    .replace(/(?:View\s+activity|アクティビティを見る|View\s+post\s+activity|View\s+insights|Insights)+/gi, "")
+    .replace(/(^|\s)\d{1,2}\s*\/\s*\d{1,2}(\s|$)/g, "$1$2")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
@@ -282,11 +285,42 @@ export class ThreadsBrowser {
           await this.clickNewPostButton();
           await humanDelay(1500, 3000);
 
-          // テキスト入力エリア待機
-          await this.page.waitForSelector(SELECTORS.postTextarea, {
-            timeout: 30_000,
-          });
-          await humanType(this.page, SELECTORS.postTextarea, sanitizedText);
+          // テキスト入力エリア待機。Threads UI は contenteditable で実装されており
+          // dialog 内に出ることが多いが、モバイル/旧 UI ではページ全体に出るケースもある。
+          // セレクタを段階的に拡張し、最初に見つかった要素にフォーカスする。
+          let textareaHandle = await this.page.waitForSelector(
+            [
+              '[role="dialog"] [contenteditable="true"]',
+              '[role="dialog"] [data-lexical-editor="true"]',
+              '[data-lexical-editor="true"]',
+              '[contenteditable="true"][role="textbox"]',
+              'div[contenteditable="true"][aria-label]',
+              'div[contenteditable="true"]',
+              'textarea',
+            ].join(", "),
+            { timeout: 15_000 },
+          ).catch(() => null);
+
+          // フォールバック: ページキー操作で投稿モーダルを再オープン
+          if (!textareaHandle) {
+            console.warn("[threads] Textarea not found, retrying with keyboard shortcut");
+            await this.page.keyboard.press("p").catch(() => {});
+            await humanDelay(1500, 2500);
+            textareaHandle = await this.page.waitForSelector(
+              '[role="dialog"] [contenteditable="true"], [contenteditable="true"][role="textbox"], div[contenteditable="true"]',
+              { timeout: 12_000 },
+            ).catch(() => null);
+          }
+
+          if (!textareaHandle) {
+            await this.takeScreenshot(`error-no-textarea-${opts.scheduledId ?? Date.now()}`);
+            throw new Error("Post textarea not found after fallback");
+          }
+
+          // フォーカスして文字を入力（contenteditable は click → keyboard.type が安定）
+          await textareaHandle.click({ delay: 80 }).catch(() => {});
+          await humanDelay(300, 600);
+          await this.page.keyboard.type(sanitizedText, { delay: 25 });
           await humanDelay(800, 1500);
 
           if (opts.imagePaths && opts.imagePaths.length > 0) {

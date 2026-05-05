@@ -6,7 +6,8 @@ import {
   pgTable, uuid, varchar, text, timestamp, integer, boolean, real, index,
 } from "drizzle-orm/pg-core";
 import { eq, sql } from "drizzle-orm";
-import { ThreadsScraper, calcBuzzScore, classifyPostFormat } from "../browser/threads-scraper.js";
+import { calcBuzzScore, classifyPostFormat } from "../browser/threads-scraper.js";
+import { createThreadsScraper } from "../browser/threads-scraper-factory.js";
 import { InstagramScraper } from "../browser/instagram-scraper.js";
 import { collectImages } from "./image-collector.js";
 
@@ -233,7 +234,7 @@ export function createCollectTrendsWorker() {
           const threadsUser = process.env.THREADS_USERNAME;
           const threadsPass = process.env.THREADS_PASSWORD;
 
-          const scraper = new ThreadsScraper(
+          const scraper = await createThreadsScraper(
             { headless: true, username: threadsUser },
             async (msg) => {
               console.log(`[scraper] ${msg}`);

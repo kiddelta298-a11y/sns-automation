@@ -1,0 +1,1 @@
+ALTER TABLE "scheduled_posts" ADD COLUMN "platform_post_id" varchar(500);

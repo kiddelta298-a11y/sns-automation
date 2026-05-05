@@ -81,6 +81,12 @@ async function executePendingPosts(): Promise<void> {
           continue;
         }
 
+        // metadata.imagePaths があれば添付画像として渡す（画像付き自動投稿用）
+        const metadataT = (row.metadata as Record<string, unknown>) ?? {};
+        const imagePathsT = Array.isArray(metadataT.imagePaths)
+          ? (metadataT.imagePaths as unknown[]).filter((p): p is string => typeof p === "string" && p.length > 0)
+          : [];
+
         const job = await threadsPostQueue.add(
           `scheduled-${scheduledId}`,
           {
@@ -91,6 +97,7 @@ async function executePendingPosts(): Promise<void> {
             password: (credentials.password as string) ?? "",
             ...(storageState ? { storageState } : {}),
             text: sanitizedText,
+            ...(imagePathsT.length > 0 ? { imagePaths: imagePathsT } : {}),
             headless,
             ...(proxyConfig ? { proxy: proxyConfig } : {}),
           },

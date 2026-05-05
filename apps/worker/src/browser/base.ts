@@ -34,6 +34,21 @@ function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// ── プロキシ設定を環境変数から読み込む ─────────────────────────────────────
+// PLAYWRIGHT_PROXY_SERVER が未設定なら undefined を返す（後方互換）
+export function readProxyFromEnv():
+  | { server: string; username?: string; password?: string }
+  | undefined {
+  const server = process.env.PLAYWRIGHT_PROXY_SERVER?.trim();
+  if (!server) return undefined;
+  const username = process.env.PLAYWRIGHT_PROXY_USER?.trim();
+  const password = process.env.PLAYWRIGHT_PROXY_PASS?.trim();
+  const proxy: { server: string; username?: string; password?: string } = { server };
+  if (username) proxy.username = username;
+  if (password) proxy.password = password;
+  return proxy;
+}
+
 // ── ランダム遅延 ────────────────────────────────────────────────────────
 export async function humanDelay(minMs = 800, maxMs = 2000): Promise<void> {
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
@@ -126,6 +141,11 @@ export interface BrowserSessionOptions {
   proxy?: { server: string; username?: string; password?: string };
   /** 画像・フォント等の不要リソースをブロックして高速化（デフォルト: true） */
   blockResources?: boolean;
+  /**
+   * DBから直接渡すPlaywright storageState JSON。
+   * 指定された場合、ファイルキャッシュより優先してブラウザコンテキストへ読み込む。
+   */
+  storageState?: Record<string, unknown>;
 }
 
 export class BrowserSession {
@@ -137,13 +157,16 @@ export class BrowserSession {
   private readonly mobile: boolean;
   private readonly proxy?: { server: string; username?: string; password?: string };
   private readonly blockResources: boolean;
+  private readonly inlineStorageState?: Record<string, unknown>;
 
   constructor(opts: BrowserSessionOptions) {
     this.sessionKey    = opts.sessionKey;
     this.headless      = opts.headless ?? true;
     this.mobile        = opts.mobile ?? false;
-    this.proxy         = opts.proxy;
+    // 明示指定がなければ環境変数 PLAYWRIGHT_PROXY_SERVER/_USER/_PASS を参照
+    this.proxy         = opts.proxy ?? readProxyFromEnv();
     this.blockResources = opts.blockResources ?? true;
+    this.inlineStorageState = opts.storageState;
   }
 
   private get statePath(): string {
@@ -203,7 +226,13 @@ export class BrowserSession {
 
     if (this.proxy) contextOpts.proxy = this.proxy;
 
-    if (fs.existsSync(this.statePath)) {
+    // 優先順位: 1) 呼び出し側が注入した storageState（DB保存分）
+    //           2) ローカルファイルキャッシュ
+    if (this.inlineStorageState) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      contextOpts.storageState = this.inlineStorageState as any;
+      console.log(`[session] Using inline storageState: ${this.sessionKey}`);
+    } else if (fs.existsSync(this.statePath)) {
       try {
         contextOpts.storageState = this.statePath;
         console.log(`[session] Restored session: ${this.sessionKey}`);
@@ -243,6 +272,13 @@ export class BrowserSession {
     const state = await this.context.storageState();
     fs.writeFileSync(this.statePath, JSON.stringify(state, null, 2));
     console.log(`[session] Saved: ${this.sessionKey}`);
+  }
+
+  /** 現在のコンテキストのstorageStateをJSONオブジェクトとして取得 */
+  async getStorageState(): Promise<Record<string, unknown>> {
+    if (!this.context) throw new Error("Browser session not initialized");
+    const state = await this.context.storageState();
+    return state as unknown as Record<string, unknown>;
   }
 
   async close(): Promise<void> {

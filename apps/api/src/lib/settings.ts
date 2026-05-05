@@ -10,6 +10,7 @@ export const SETTING_KEYS = {
   NTFY_URL:                   "ntfy_url",
   NTFY_TOPIC:                 "ntfy_topic",
   DEFAULT_ACCOUNT_ID:         "default_account_id",
+  THREADS_SCRAPER_ENGINE:     "threads_scraper_engine",
 } as const;
 
 export const SETTING_DEFAULTS: Record<string, string> = {
@@ -19,6 +20,7 @@ export const SETTING_DEFAULTS: Record<string, string> = {
   [SETTING_KEYS.NTFY_URL]:                   "",
   [SETTING_KEYS.NTFY_TOPIC]:                 "sns-automation",
   [SETTING_KEYS.DEFAULT_ACCOUNT_ID]:         "",
+  [SETTING_KEYS.THREADS_SCRAPER_ENGINE]:     "playwright",
 };
 
 export async function getSetting(key: string): Promise<string | null> {
@@ -43,8 +45,11 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .values({ key, value, updatedAt: new Date() })
     .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
 
-  // GEMINI_API_KEY はプロセス環境変数にも即反映
+  // 一部キーはプロセス環境変数にも即反映（再起動なしで有効化）
   if (key === SETTING_KEYS.GEMINI_API_KEY) {
     process.env.GEMINI_API_KEY = value;
+  }
+  if (key === SETTING_KEYS.THREADS_SCRAPER_ENGINE) {
+    process.env.THREADS_SCRAPER_ENGINE = value;
   }
 }

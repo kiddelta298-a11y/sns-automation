@@ -1,5 +1,6 @@
 import { BrowserSession, humanDelay, humanScroll, detectBlock, humanType, type BrowserSessionOptions } from "./base.js";
 import type { Page } from "playwright";
+import type { IThreadsScraper, ScrapeAccountPostsDetailedOpts } from "./threads-scraper-interface.js";
 
 // ── ブロック検知時のバックオフ（短縮版） ─────────────────────────────────────
 // login_wall → 即スキップ（リトライしない）
@@ -40,7 +41,7 @@ export type ProgressCallback = (msg: string) => void;
 // ============================================================
 // Threads スクレイパー
 // ============================================================
-export class ThreadsScraper {
+export class ThreadsScraper implements IThreadsScraper {
   private session: BrowserSession;
   private loggedIn = false;
   private onProgress: ProgressCallback;
@@ -308,6 +309,482 @@ export class ThreadsScraper {
   }
 
   // ─────────────────────────────────────────────────────────
+  // 【推奨】プロフィール→スクロール→投稿URL収集→詳細ページ巡回
+  //   人間的な速度（ランダム遅延・スクロール・マウス移動）で
+  //   IPブロックを回避しつつ、各投稿の正確なエンゲージメント値を取得。
+  //
+  //   動作仕様：
+  //   - targetMatches: フィルター条件に合致する投稿の目標件数
+  //   - matchFilter(post) が true を返した投稿のみカウント
+  //   - 合致数が target に達するまで詳細巡回を続ける
+  //   - プロフィールURLを使い切ったら自動的に再スクロールして追加取得
+  //   - hardCap（デフォルト target の15倍 or 200）で暴走防止
+  // ─────────────────────────────────────────────────────────
+  async scrapeAccountPostsDetailed(
+    username: string,
+    targetMatches = 20,
+    opts: {
+      /** 投稿間の待機時間レンジ [min, max] ms — AI検知回避用 */
+      postDelayMs?: [number, number];
+      /** この関数が true を返した投稿のみ「合致」としてカウント */
+      matchFilter?: (post: ScrapedPost) => boolean;
+      /** 合致数が増えるたび/URL処理ごとに呼ばれる進捗コールバック */
+      onPostScraped?: (
+        matchedCount: number,
+        targetCount: number,
+        processedCount: number,
+        post: ScrapedPost | null,
+        isMatch: boolean,
+      ) => void;
+      /** 処理URL上限（暴走防止）。未指定なら target×15 または 200 の大きい方 */
+      maxProcessedUrls?: number;
+    } = {},
+  ): Promise<ScrapedPost[]> {
+    const page = this.session.page;
+    const [minDelay, maxDelay] = opts.postDelayMs ?? [6_000, 14_000];
+    const matchFilter = opts.matchFilter ?? (() => true);
+    const hardCap = opts.maxProcessedUrls ?? Math.max(targetMatches * 15, 200);
+
+    const results: ScrapedPost[] = [];
+    const allUrls = new Set<string>();
+    const processedUrls = new Set<string>();
+    let matchedCount = 0;
+
+    this.onProgress(`@${username} のプロフィールを開いています...`);
+
+    try {
+      // ── 1. プロフィールへアクセス ──
+      const profileUrl = `https://www.threads.com/@${username}`;
+      const ok = await this._gotoWithBlockCheck(profileUrl);
+      if (!ok) {
+        this.onProgress(`@${username}: プロフィールアクセス失敗、スキップ`);
+        return [];
+      }
+      await page.waitForSelector("[data-pressable-container], article", { timeout: 10_000 }).catch(() => {});
+      await humanDelay(2000, 4000);
+
+      const collectUrls = async () => {
+        const urls: string[] = await page.evaluate(() => {
+          var out: string[] = [];
+          var anchors = document.querySelectorAll("a[href*='/post/']");
+          for (var i = 0; i < anchors.length; i++) {
+            var h = anchors[i].getAttribute("href") || "";
+            if (h && !out.includes(h)) out.push(h);
+          }
+          return out;
+        });
+        for (const u of urls) allUrls.add(u);
+      };
+
+      await collectUrls();
+      this.onProgress(`@${username}: 初回で ${allUrls.size} 件の投稿URLを発見`);
+
+      // ── 2. プロフィールでバッファ分（target×3程度）のURLを先行収集 ──
+      const initialBufferTarget = Math.min(Math.max(targetMatches * 3, 30), hardCap);
+      let sameScrollCount = 0;
+      let profileExhausted = false;
+      while (allUrls.size < initialBufferTarget && sameScrollCount < 6 && !profileExhausted) {
+        await humanScroll(page, 600 + Math.floor(Math.random() * 600));
+        await humanDelay(1500, 3500);
+        const before = allUrls.size;
+        await collectUrls();
+        if (allUrls.size === before) sameScrollCount++;
+        else {
+          sameScrollCount = 0;
+          this.onProgress(`@${username}: ${allUrls.size} URL 収集済み（バッファリング中）`);
+        }
+
+        const blockType = await detectBlock(page);
+        if (blockType) {
+          this.onProgress(`@${username}: スクロール中にブロック検知 (${blockType})`);
+          break;
+        }
+      }
+      if (sameScrollCount >= 6) profileExhausted = true;
+
+      // ── 3. 詳細巡回ループ：target に達するまで続ける ──
+      this.onProgress(`@${username}: 詳細抽出を開始（目標合致数 ${targetMatches} 件）`);
+
+      while (matchedCount < targetMatches && processedUrls.size < hardCap) {
+        // 未処理URLを1件取り出す
+        const nextUrl = Array.from(allUrls).find((u) => !processedUrls.has(u));
+
+        if (!nextUrl) {
+          // URLを使い切った：プロフィールに戻ってさらにスクロール
+          if (profileExhausted) {
+            this.onProgress(`@${username}: プロフィール末尾到達。合致 ${matchedCount}/${targetMatches} で終了`);
+            break;
+          }
+          this.onProgress(`@${username}: URLを使い切り。プロフィールに戻って追加収集中...`);
+          const backOk = await this._gotoWithBlockCheck(profileUrl);
+          if (!backOk) break;
+          await humanDelay(1500, 3000);
+
+          // 既に読み込んだ分までスクロールしてから追加読み込み
+          const scrollsNeeded = Math.floor(allUrls.size / 4);
+          for (let s = 0; s < scrollsNeeded; s++) {
+            await humanScroll(page, 900);
+            await humanDelay(400, 900);
+          }
+          await humanDelay(1500, 3000);
+
+          // 追加URL収集
+          const before = allUrls.size;
+          let additionalScrollAttempts = 0;
+          while (additionalScrollAttempts < 8) {
+            await humanScroll(page, 700 + Math.floor(Math.random() * 600));
+            await humanDelay(1500, 3500);
+            const b = allUrls.size;
+            await collectUrls();
+            if (allUrls.size === b) additionalScrollAttempts++;
+            else additionalScrollAttempts = 0;
+          }
+          if (allUrls.size === before) {
+            profileExhausted = true;
+            this.onProgress(`@${username}: プロフィール末尾到達。合致 ${matchedCount}/${targetMatches} で終了`);
+            break;
+          }
+          continue;
+        }
+
+        // 詳細ページを処理
+        processedUrls.add(nextUrl);
+        const fullUrl = nextUrl.startsWith("http") ? nextUrl : `https://www.threads.com${nextUrl}`;
+        let detail: ScrapedPost | null = null;
+        let isMatch = false;
+
+        // GraphQL interceptor must be registered BEFORE goto so page-load API responses are captured
+        let gLike = 0, gView = 0, gReply = 0, gRepost = 0;
+        const gqlHandler = (resp: import("playwright").Response) => {
+          const u = resp.url();
+          if (!/graphql|\/api\/|\/post_info/i.test(u)) return;
+          void resp.json().then((json: unknown) => {
+            const stack: unknown[] = [json];
+            let depth = 0;
+            while (stack.length && depth < 5000) {
+              depth++;
+              const cur = stack.pop();
+              if (!cur || typeof cur !== "object") continue;
+              const obj = cur as Record<string, unknown>;
+              const lk = obj.like_count;
+              if (typeof lk === "number" && lk > gLike) gLike = lk;
+              const vc = (obj.view_count ?? obj.video_view_count ?? obj.feed_view_count ?? obj.impression_count) as unknown;
+              if (typeof vc === "number" && vc > gView) gView = vc;
+              const rc = (obj.reshare_count ?? obj.repost_count) as unknown;
+              if (typeof rc === "number" && rc > gRepost) gRepost = rc;
+              const rp = (obj.direct_reply_count ?? obj.reply_count) as unknown;
+              if (typeof rp === "number" && rp > gReply) gReply = rp;
+              for (const v of Object.values(obj)) {
+                if (v && typeof v === "object") stack.push(v);
+              }
+            }
+          }).catch(() => {});
+        };
+        page.on("response", gqlHandler);
+
+        try {
+          const ok2 = await this._gotoWithBlockCheck(fullUrl);
+          if (ok2) {
+            await this._expandTruncatedPosts(page);
+            await humanDelay(800, 1600);
+
+            // 自然に少しスクロール（読んでいる風）
+            if (Math.random() > 0.3) {
+              await humanScroll(page, 200 + Math.floor(Math.random() * 300));
+              await humanDelay(700, 1800);
+            }
+
+            detail = await this._extractPostDetailWithRetry(page, username, nextUrl);
+            if (detail) {
+              // Merge GraphQL-intercepted values (caught during page load) with DOM extraction
+              if (gLike > detail.likeCount) detail.likeCount = gLike;
+              if (gView > detail.viewCount) detail.viewCount = gView;
+              if (gReply > detail.replyCount) detail.replyCount = gReply;
+              if (gRepost > detail.repostCount) detail.repostCount = gRepost;
+              results.push(detail);
+              isMatch = matchFilter(detail);
+              if (isMatch) matchedCount++;
+            }
+          } else {
+            this.onProgress(`[処理 ${processedUrls.size}] アクセス失敗: ${nextUrl}`);
+          }
+        } catch (err) {
+          this.onProgress(`[処理 ${processedUrls.size}] エラー: ${err}`);
+        } finally {
+          page.off("response", gqlHandler);
+        }
+
+        opts.onPostScraped?.(matchedCount, targetMatches, processedUrls.size, detail, isMatch);
+        this.onProgress(
+          `[合致 ${matchedCount}/${targetMatches} | 処理 ${processedUrls.size}] ` +
+          (detail
+            ? `${isMatch ? "✓" : "×"} ❤${detail.likeCount} 💬${detail.replyCount} 🔁${detail.repostCount} 👁${detail.viewCount}`
+            : "抽出失敗"),
+        );
+
+        // 次の投稿を開く前にランダム待機（AI検知回避）
+        if (matchedCount < targetMatches && processedUrls.size < hardCap) {
+          await humanDelay(minDelay, maxDelay);
+        }
+      }
+
+      if (processedUrls.size >= hardCap && matchedCount < targetMatches) {
+        this.onProgress(`@${username}: 処理上限 ${hardCap} に到達（合致 ${matchedCount}/${targetMatches}）`);
+      }
+      this.onProgress(`@${username}: 完了 合致 ${matchedCount}/${targetMatches} 件（処理総数 ${processedUrls.size}）`);
+    } catch (err) {
+      this.onProgress(`@${username}: 致命的エラー ${err}`);
+    }
+
+    return results;
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 詳細抽出（リトライ付き）
+  //   全4指標のうち1つでも 0 のまま & aria-labelボタンが揃っていれば
+  //   短い待機を挟んで最大3回リトライ。遅延レンダリング対策。
+  // ─────────────────────────────────────────────────────────
+  private async _extractPostDetailWithRetry(
+    page: Page,
+    authorUsername: string,
+    platformPostId: string,
+  ): Promise<ScrapedPost | null> {
+    // 主投稿のアクションバー（aria-labelが付いたボタン）を最大5秒待機
+    await page.waitForSelector(
+      "button[aria-label*='いいね'], button[aria-label*='like'], " +
+      "button[aria-label*='Like'], button[aria-label*='いいね！']",
+      { timeout: 5_000 },
+    ).catch(() => { /* セレクタ未検知でも抽出を試みる */ });
+
+    let best: ScrapedPost | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const got = await this._extractPostDetail(page, authorUsername, platformPostId);
+      if (got) {
+        // より完全な結果を保持（メトリクス合計が大きい方）
+        const score = (x: ScrapedPost) => x.likeCount + x.replyCount + x.repostCount + x.viewCount;
+        if (!best || score(got) > score(best)) best = got;
+
+        // 4指標すべて取得できたら成功
+        if (got.likeCount > 0 && got.replyCount >= 0 && got.repostCount >= 0 && got.viewCount > 0) {
+          // viewCount > 0 かつ likeCount > 0 を必須（最低限の信頼性）
+          return got;
+        }
+      }
+
+      // リトライ前の追加待機 + 軽いスクロールでレンダリングを促す
+      if (attempt < 3) {
+        await humanDelay(1200, 2200);
+        await humanScroll(page, 120 + Math.floor(Math.random() * 200));
+        await humanDelay(800, 1400);
+      }
+    }
+
+    // 最終手段：いずれかに欠けがあっても best を返す（null よりマシ）
+    return best;
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 投稿詳細ページから1投稿を抽出
+  //   - 本文、画像、いいね、返信、リポスト、インプレッション（「X回」）
+  //   - 戦略0: GraphQL レスポンスから view_count / like_count を傍受（最も信頼性高い）
+  //   - 戦略1: aria-label ベースのDOM抽出
+  //   - 戦略2: 位置ベースのDOM抽出フォールバック
+  //   - 戦略3: 「X回表示」テキストの全文ウォーク
+  // ─────────────────────────────────────────────────────────
+  private async _extractPostDetail(
+    page: Page,
+    authorUsername: string,
+    platformPostId: string,
+  ): Promise<ScrapedPost | null> {
+    // GraphQL 傍受は scrapeAccountPostsDetailed 側で navigation 前に登録済み。
+    // ここでは DOM 抽出のみ実行し、結果は外側で MAX マージされる。
+    try {
+      const raw = await page.evaluate(function(uname) {
+        // ── 本文抽出：メイン投稿（通常は最初の article / [data-pressable-container]） ──
+        var mainContainer = document.querySelector("[data-pressable-container], article, div[role='article']");
+        if (!mainContainer) return null;
+
+        var allSpans = mainContainer.querySelectorAll("span[dir='auto'], span[dir='ltr'], span[dir='rtl'], [data-text-content]");
+        var contentParts: string[] = [];
+        for (var si = 0; si < allSpans.length; si++) {
+          var sp = allSpans[si];
+          if (sp.closest("a")) continue;
+          var t = (sp.textContent || "").trim();
+          if (t.length >= 5 && !/^[\d/:. ]+$/.test(t)) contentParts.push(t);
+        }
+        var contentText = contentParts.join(" ");
+
+        // ── 画像 ──
+        var imgEls = mainContainer.querySelectorAll("img[src*='cdninstagram'], img[src*='fbcdn'], img[src*='scontent']");
+        var imageUrls: string[] = [];
+        for (var ii = 0; ii < imgEls.length && imageUrls.length < 5; ii++) {
+          var src = imgEls[ii].getAttribute("src") || "";
+          if (src.startsWith("http") && !src.includes(".svg")) imageUrls.push(src);
+        }
+
+        // NOTE: page.evaluate内ではfunction宣言を使うとesbuild __name でクラッシュする
+        //       そのため以下の数値パース処理はすべてインライン記述する
+        var likeCount = 0, replyCount = 0, repostCount = 0, viewCount = 0;
+
+        // ── 方式1: aria-label ベース（詳細ページでは主投稿のaria-labelが明確） ──
+        //   主投稿のアクションバーのみをターゲットにするため、最初のmainContainerに限定
+        var buttons = mainContainer.querySelectorAll("button, [role='button'], a[role='link']");
+        for (var bi = 0; bi < buttons.length; bi++) {
+          var btn = buttons[bi];
+          var aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+          var btxt = (btn.textContent || "").replace(/[,，]/g, "").trim();
+          var c = 0;
+          var pm = btxt.replace(/[\s]/g, "").match(/([\d.]+)([KkMm万千]?)/);
+          if (pm) {
+            var pn = parseFloat(pm[1]);
+            var pu = (pm[2] || "").toLowerCase();
+            c = pu === "k" ? Math.round(pn * 1000)
+              : pu === "m" ? Math.round(pn * 1000000)
+              : pu === "万" ? Math.round(pn * 10000)
+              : pu === "千" ? Math.round(pn * 1000)
+              : Math.round(pn);
+          }
+          if (aria.includes("いいね") || aria.includes("like")) {
+            if (c > likeCount) likeCount = c;
+          } else if (aria.includes("返信") || aria.includes("reply") || aria.includes("comment")) {
+            if (c > replyCount) replyCount = c;
+          } else if (aria.includes("リポスト") || aria.includes("repost") || aria.includes("rethread") || aria.includes("再共有")) {
+            if (c > repostCount) repostCount = c;
+          } else if (aria.includes("表示") || aria.includes("view") || aria.includes("impression")) {
+            if (c > viewCount) viewCount = c;
+          }
+        }
+
+        // ── 方式2: aria-label で取れなかった指標を、mainContainer内のSVG付きボタン
+        //           位置ベース推定でフォールバック（順序: ❤いいね, 💬返信, 🔄リポスト, ✈️シェア） ──
+        if (likeCount === 0 || replyCount === 0 || repostCount === 0) {
+          var actionCounts: number[] = [];
+          for (var ab = 0; ab < buttons.length; ab++) {
+            var abtn = buttons[ab];
+            if (!abtn.querySelector("svg")) continue;
+            // ボタンがアクションバー位置（投稿本文より下）にあるかチェック
+            var abRect = abtn.getBoundingClientRect();
+            if (abRect.width === 0 || abRect.height === 0) continue;
+
+            var abText = (abtn.textContent || "").replace(/[,，\s]/g, "").trim();
+            var abm = abText.match(/([\d.]+)([KkMm万千]?)/);
+            if (!abm) { actionCounts.push(0); continue; }
+            var abn = parseFloat(abm[1]);
+            var abu = (abm[2] || "").toLowerCase();
+            var abcnt = abu === "k" ? Math.round(abn * 1000)
+                      : abu === "m" ? Math.round(abn * 1000000)
+                      : abu === "万" ? Math.round(abn * 10000)
+                      : abu === "千" ? Math.round(abn * 1000)
+                      : Math.round(abn);
+            actionCounts.push(abcnt);
+          }
+          if (actionCounts.length >= 3) {
+            if (likeCount === 0) likeCount = actionCounts[0];
+            if (replyCount === 0) replyCount = actionCounts[1];
+            if (repostCount === 0) repostCount = actionCounts[2];
+          }
+        }
+
+        // ── 方式3（views主用）: ページ全体から「X,XXX回」「X,XXX回表示」パターンを探す ──
+        //   「スレッド」ヘッダ直下のX回や、インプレッション用のリンクを探す
+        var candidates: { num: number; score: number }[] = [];
+        var walkers = document.querySelectorAll("span, div, a");
+        for (var wi = 0; wi < walkers.length; wi++) {
+          var wel = walkers[wi];
+          if (wel.children && wel.children.length > 0) continue;
+          var wt = (wel.textContent || "").trim();
+          // 「1,234回」「1.2万回」「1.5K views」「2,345回表示」「2,345 views」などにマッチ
+          var vm = wt.match(/^([\d.,]+)\s*([KkMm万千]?)\s*(回表示|回|views?|view|impressions?)$/i);
+          if (!vm) continue;
+          var vn = parseFloat(vm[1].replace(/,/g, ""));
+          var vu = (vm[2] || "").toLowerCase();
+          var vcount = vu === "k" ? Math.round(vn * 1000)
+                    : vu === "m" ? Math.round(vn * 1000000)
+                    : vu === "万" ? Math.round(vn * 10000)
+                    : vu === "千" ? Math.round(vn * 1000)
+                    : Math.round(vn);
+          if (vcount <= 0) continue;
+
+          // スコアリング：メイン投稿コンテナ内にあるものを優先
+          var score = 0;
+          if (mainContainer.contains(wel)) score += 10;
+
+          // 「スレッド」または「Thread」文字列が親/祖父に含まれていれば高スコア
+          var parent = wel.parentElement;
+          var grand = parent ? parent.parentElement : null;
+          var ggrand = grand ? grand.parentElement : null;
+          if (parent && /スレッド|Thread/i.test(parent.textContent || "")) score += 5;
+          if (grand && /スレッド|Thread/i.test(grand.textContent || "")) score += 3;
+          if (ggrand && /スレッド|Thread/i.test(ggrand.textContent || "")) score += 1;
+
+          // 「回表示」「impressions」は明示的にビュー指標なので加点
+          if (/回表示|impression/i.test(vm[3])) score += 8;
+
+          candidates.push({ num: vcount, score: score });
+        }
+        candidates.sort(function(a, b) {
+          if (b.score !== a.score) return b.score - a.score;
+          return b.num - a.num;
+        });
+        if (candidates.length > 0 && viewCount === 0) viewCount = candidates[0].num;
+
+        // ── 投稿日時 ──
+        var timeEl = mainContainer.querySelector("time");
+        var postedAt = timeEl ? timeEl.getAttribute("datetime") : null;
+
+        return {
+          authorUsername: uname,
+          authorFollowers: null,
+          contentText: contentText,
+          hasImage: imageUrls.length > 0,
+          imageUrls: imageUrls,
+          likeCount: likeCount,
+          repostCount: repostCount,
+          replyCount: replyCount,
+          viewCount: viewCount,
+          postedAt: postedAt,
+        };
+      }, authorUsername);
+
+      if (!raw) return null;
+
+      // 自分のリプライ連投の「続き」(2/2 など) は抽出しない。1件目だけ残す。
+      const m = (raw.contentText || "").match(/(?:^|\s)(\d{1,2})\s*\/\s*(\d{1,2})(?:\s|$)/);
+      if (m) {
+        const idx = parseInt(m[1], 10);
+        if (Number.isFinite(idx) && idx >= 2) {
+          this.onProgress(`@${authorUsername} ${platformPostId}: 連投の続編 (${m[0].trim()}) をスキップ`);
+          return null;
+        }
+      }
+
+      const cleanedText = (raw.contentText || "")
+        .replace(/(^|\s)(?:Translate|翻訳を見る|翻訳|See translation|Translated from \w+)(\s|$)/gi, "$1$2")
+        .replace(/(?:View\s+activity|アクティビティを見る|View\s+post\s+activity|View\s+insights|Insights)+/gi, "")
+        .replace(/(^|\s)\d{1,2}\s*\/\s*\d{1,2}(\s|$)/g, "$1$2")
+        .replace(/[ \t]{2,}/g, " ")
+        .trim();
+
+      return {
+        authorUsername: raw.authorUsername,
+        authorFollowers: raw.authorFollowers,
+        contentText: cleanedText,
+        hasImage: raw.hasImage,
+        imageUrls: raw.imageUrls,
+        likeCount: raw.likeCount,
+        repostCount: raw.repostCount,
+        replyCount: raw.replyCount,
+        viewCount: raw.viewCount,
+        postedAt: raw.postedAt ? new Date(raw.postedAt) : null,
+        platformPostId,
+      };
+    } catch (err) {
+      this.onProgress(`詳細抽出エラー: ${err}`);
+      return null;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
   // アカウントプロフィール情報を取得（開設日・フォロワー数など）
   // ─────────────────────────────────────────────────────────
   async scrapeAccountProfile(username: string): Promise<ScrapedAccountProfile> {
@@ -493,6 +970,18 @@ export class ThreadsScraper {
         }
         var contentText = contentParts.join(" ");
         if (!contentText || contentText.length < 5) continue;
+
+        // 連投続き（2/N以降）はスキップ
+        var threadPosMatch = contentText.match(/(?:^|\s)(\d{1,2})\s*\/\s*(\d{1,2})(?:\s|$)/);
+        if (threadPosMatch && parseInt(threadPosMatch[1], 10) >= 2) continue;
+
+        // スレッドマーカー・翻訳ラベル・View activity 系UIラベルを除去
+        contentText = contentText
+          .replace(/(^|\s)(?:Translate|翻訳を見る|翻訳|See translation|Translated from [A-Za-z]+)(\s|$)/gi, "$1$2")
+          .replace(/(?:View\s+activity|アクティビティを見る|View\s+post\s+activity|View\s+insights|Insights)+/gi, "")
+          .replace(/(^|\s)\d{1,2}\s*\/\s*\d{1,2}(\s|$)/g, "$1$2")
+          .replace(/[ \t]{2,}/g, " ")
+          .trim();
 
         var usernameEl = container.querySelector("a[href*='/@']");
         var authorUsername = usernameEl

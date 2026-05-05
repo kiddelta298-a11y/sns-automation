@@ -8,6 +8,27 @@
       "when": 1775355990516,
       "tag": "0000_mushy_spyke",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777102010799,
+      "tag": "0001_thick_brood",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777104142763,
+      "tag": "0002_tense_giant_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777106710958,
+      "tag": "0003_shallow_miracleman",
+      "breakpoints": true
     }
   ]
 }

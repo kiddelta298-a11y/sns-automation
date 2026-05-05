@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createThreadsPostWorker } from "./jobs/post-to-threads.js";
-import { createInstagramPostWorker } from "./jobs/post-to-instagram.js";
+import { createInstagramPostWorker, createInstagramStoryWorker } from "./jobs/post-to-instagram.js";
+import { createXPostWorker } from "./jobs/post-to-x.js";
 import { createCollectTrendsWorker } from "./jobs/collect-trends.js";
 import { startScheduleExecutor } from "./jobs/schedule-executor.js";
 import { createAnalyzeGenreWorker } from "./jobs/analyze-genre.js";
@@ -34,6 +35,14 @@ async function main(): Promise<void> {
   const instagramWorker = createInstagramPostWorker();
   console.log("[worker] Instagram post worker started");
 
+  // Instagram ストーリーワーカーを起動
+  const instagramStoryWorker = createInstagramStoryWorker();
+  console.log("[worker] Instagram story worker started");
+
+  // X (旧Twitter) 投稿ワーカーを起動
+  const xWorker = createXPostWorker();
+  console.log("[worker] X post worker started");
+
   // トレンド収集ワーカーを起動
   const collectTrendsWorker = createCollectTrendsWorker();
   console.log("[worker] Collect trends worker started");
@@ -57,6 +66,8 @@ async function main(): Promise<void> {
     await Promise.all([
       threadsWorker.close(),
       instagramWorker.close(),
+      instagramStoryWorker.close(),
+      xWorker.close(),
       collectTrendsWorker.close(),
       analyzeGenreWorker.close(),
       monitorAccountsWorker.close(),

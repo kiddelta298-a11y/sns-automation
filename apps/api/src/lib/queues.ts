@@ -57,3 +57,25 @@ export const monitorAccountsQueue = new Queue("monitor-accounts", {
     removeOnFail: { age: 30 * 24 * 3600 },
   },
 });
+
+// Instagram ストーリー投稿ジョブキュー
+export const instagramStoryQueue = new Queue("post-to-instagram-story", {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 30_000 },
+    removeOnComplete: { age: 7 * 24 * 3600 },
+    removeOnFail: { age: 30 * 24 * 3600 },
+  },
+});
+
+// Instagram フィード投稿ジョブキュー（worker側 QUEUE_NAME と一致させる）
+export const instagramPostQueue = new Queue("post-to-instagram", {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 30_000 },
+    removeOnComplete: { age: 7 * 24 * 3600 },
+    removeOnFail: { age: 30 * 24 * 3600 },
+  },
+});

@@ -29,6 +29,8 @@ export const accounts = pgTable(
     credentials: jsonb("credentials").notNull(),
     proxyConfig: jsonb("proxy_config"),
     status: varchar("status", { length: 20 }).default("active").notNull(),
+    affiliateUrl: text("affiliate_url"),
+    affiliateLabel: varchar("affiliate_label", { length: 60 }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -278,6 +280,11 @@ export const scheduledPosts = pgTable(
     status: varchar("status", { length: 20 }).default("pending").notNull(),
     retryCount: integer("retry_count").default(0),
     errorMessage: text("error_message"),
+    progressPct: integer("progress_pct").default(0),
+    currentStage: varchar("current_stage", { length: 50 }).default("pending"),
+    startedAt: timestamp("started_at"),
+    screenshotPath: varchar("screenshot_path", { length: 500 }),
+    platformPostId: varchar("platform_post_id", { length: 500 }),
   },
   (table) => [
     index("idx_scheduled_posts_status_scheduled").on(table.status, table.scheduledAt),
@@ -290,6 +297,31 @@ export const scheduledPostsRelations = relations(scheduledPosts, ({ one }) => ({
     references: [posts.id],
   }),
 }));
+
+// ============================================================
+// post_history（BullMQジョブ実行履歴）
+// ============================================================
+export const postHistory = pgTable(
+  "post_history",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: text("job_id").notNull(),
+    platform: text("platform").notNull(), // 'instagram' | 'threads' | 'x'
+    content: text("content"),
+    scheduledAt: timestamp("scheduled_at"),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    status: text("status").default("pending").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_post_history_job_id").on(table.jobId),
+    index("idx_post_history_status").on(table.status),
+    index("idx_post_history_scheduled_at").on(table.scheduledAt),
+  ],
+);
 
 // ============================================================
 // account_metrics（アカウントメトリクス）
@@ -633,6 +665,13 @@ export const adultGenres = pgTable("adult_genres", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: varchar("name", { length: 100 }).notNull(),
   description: text("description"),
+  /** バズとみなす最低ライン（グループごとに設定） */
+  buzzThresholds: jsonb("buzz_thresholds").$type<{
+    minLikes: number;
+    minViews: number;
+    minReplies: number;
+    minReposts: number;
+  }>().default({ minLikes: 0, minViews: 0, minReplies: 0, minReposts: 0 }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -685,6 +724,8 @@ export const monitoredPosts = pgTable(
     platformPostId: varchar("platform_post_id", { length: 300 }),
     contentText: text("content_text").notNull(),
     imageUrls: jsonb("image_urls").$type<string[]>().default([]),
+    /** ダウンロード済み画像のローカル絶対パス。自動投稿時に Threads へ添付する元データ。 */
+    localImagePaths: jsonb("local_image_paths").$type<string[]>().default([]),
     hasImage: boolean("has_image").default(false).notNull(),
     likeCount: integer("like_count").default(0).notNull(),
     repostCount: integer("repost_count").default(0).notNull(),

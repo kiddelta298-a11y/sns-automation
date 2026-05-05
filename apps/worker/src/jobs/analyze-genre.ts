@@ -4,7 +4,9 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, and } from "drizzle-orm";
 import { pgTable, uuid, varchar, text, jsonb, integer, timestamp, boolean, real, index } from "drizzle-orm/pg-core";
-import { ThreadsScraper, calcBuzzScore } from "../browser/threads-scraper.js";
+import { calcBuzzScore } from "../browser/threads-scraper.js";
+import { createThreadsScraper } from "../browser/threads-scraper-factory.js";
+import { downloadPostImages } from "./download-images.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
@@ -50,6 +52,7 @@ const monitoredPosts = pgTable("monitored_posts", {
   platformPostId: varchar("platform_post_id", { length: 300 }),
   contentText: text("content_text").notNull(),
   imageUrls: jsonb("image_urls").$type<string[]>().default([]),
+  localImagePaths: jsonb("local_image_paths").$type<string[]>().default([]),
   hasImage: boolean("has_image").default(false).notNull(),
   likeCount: integer("like_count").default(0).notNull(),
   repostCount: integer("repost_count").default(0).notNull(),
@@ -131,7 +134,7 @@ export function createAnalyzeGenreWorker() {
         const threadsUser = process.env.THREADS_USERNAME;
         const threadsPass = process.env.THREADS_PASSWORD;
 
-        const scraper = new ThreadsScraper(
+        const scraper = await createThreadsScraper(
           { headless: true, username: threadsUser },
           async (msg) => {
             console.log(`[analyze-genre] ${msg}`);
@@ -187,8 +190,32 @@ export function createAnalyzeGenreWorker() {
               .where(eq(referenceAccounts.id, account.id));
 
             // 投稿収集
+            // リスト表示ベースの scrapeAccountPosts はエンゲージメント値（いいね/インプレ）が
+            // 取れないことが多いため、詳細ページ巡回版に切り替えて確実なメトリクスを取得する。
             await updateProfile({ errorMessage: `@${account.username} の投稿を収集中...` });
-            const posts = await scraper.scrapeAccountPosts(account.username, 30);
+            await job.updateProgress({
+              phase: "collecting",
+              currentAccount: account.username,
+              processed: 0,
+              target: 30,
+              matched: 0,
+              message: `@${account.username} の投稿を収集中...`,
+            });
+            const posts = await scraper.scrapeAccountPostsDetailed(account.username, 30, {
+              postDelayMs: [4_000, 9_000],
+              onPostScraped: (matched, target, processed) => {
+                const msg = `@${account.username}: 抽出中 (${processed}/${target} 処理, 合致 ${matched})`;
+                void updateProfile({ errorMessage: msg, scrapedPostsCount: processed });
+                void job.updateProgress({
+                  phase: "collecting",
+                  currentAccount: account.username,
+                  processed,
+                  target,
+                  matched,
+                  message: msg,
+                });
+              },
+            });
 
             for (const p of posts) {
               const { buzzScore } = calcBuzzScore({
@@ -230,7 +257,7 @@ export function createAnalyzeGenreWorker() {
                     buzzScore,
                   });
                 } else {
-                  // 新規挿入
+                  // 新規挿入: テキスト保存後に画像をダウンロードしてローカルパスを補強
                   const [inserted] = await db.insert(monitoredPosts).values({
                     referenceAccountId: account.id,
                     genreId,
@@ -245,6 +272,19 @@ export function createAnalyzeGenreWorker() {
                     buzzScore,
                     postedAt: p.postedAt,
                   }).returning({ id: monitoredPosts.id });
+
+                  if (p.hasImage && p.imageUrls && p.imageUrls.length > 0) {
+                    try {
+                      const localPaths = await downloadPostImages(inserted.id, p.imageUrls);
+                      if (localPaths.length > 0) {
+                        await db.update(monitoredPosts)
+                          .set({ localImagePaths: localPaths })
+                          .where(eq(monitoredPosts.id, inserted.id));
+                      }
+                    } catch (e) {
+                      console.warn(`[analyze-genre] image download failed for ${inserted.id}:`, e);
+                    }
+                  }
 
                   await db.insert(postScoreSnapshots).values({
                     monitoredPostId: inserted.id,
@@ -271,6 +311,19 @@ export function createAnalyzeGenreWorker() {
                   buzzScore,
                   postedAt: p.postedAt,
                 }).returning({ id: monitoredPosts.id });
+
+                if (p.hasImage && p.imageUrls && p.imageUrls.length > 0) {
+                  try {
+                    const localPaths = await downloadPostImages(inserted.id, p.imageUrls);
+                    if (localPaths.length > 0) {
+                      await db.update(monitoredPosts)
+                        .set({ localImagePaths: localPaths })
+                        .where(eq(monitoredPosts.id, inserted.id));
+                    }
+                  } catch (e) {
+                    console.warn(`[analyze-genre] image download failed for ${inserted.id}:`, e);
+                  }
+                }
 
                 await db.insert(postScoreSnapshots).values({
                   monitoredPostId: inserted.id,
@@ -308,9 +361,16 @@ export function createAnalyzeGenreWorker() {
             return;
           }
 
-          // ── Gemini 分析 ──
+          // ── Gemini 分析（APIキーがない場合はスキップして完了） ──
+          const geminiKey = process.env.GEMINI_API_KEY ?? "";
+          if (!geminiKey) {
+            await updateProfile({ status: "completed", errorMessage: null });
+            console.log(`[analyze-genre] genreId=${genreId} completed (no Gemini key, AI analysis skipped). posts=${allPosts.length}`);
+            return;
+          }
+
           await updateProfile({ errorMessage: "Geminiで詳細分析中..." });
-          const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
+          const genai = new GoogleGenerativeAI(geminiKey);
           const model = genai.getGenerativeModel({ model: "gemini-2.0-flash" });
 
           // バズスコア上位で絞り込み（最大60件）
@@ -405,14 +465,18 @@ ${postsText}
 必ずJSONのみで回答してください。マークダウンコードブロックは使わないこと。
 `;
 
-          const result = await model.generateContent(prompt);
-          const responseText = result.response.text();
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) throw new Error("GeminiのレスポンスからJSONを抽出できませんでした");
-          const profileJson = JSON.parse(jsonMatch[0]);
+          let profileJson: unknown = null;
+          try {
+            const result = await model.generateContent(prompt);
+            const responseText = result.response.text();
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) profileJson = JSON.parse(jsonMatch[0]);
+          } catch (aiErr) {
+            console.warn(`[analyze-genre] Gemini analysis failed (posts saved): ${aiErr}`);
+          }
 
           await updateProfile({ status: "completed", profileJson, errorMessage: null });
-          console.log(`[analyze-genre] genreId=${genreId} completed. posts=${allPosts.length}`);
+          console.log(`[analyze-genre] genreId=${genreId} completed. posts=${allPosts.length}${profileJson ? "" : " (AI analysis skipped)"}`);
         } finally {
           await scraper.close();
         }

@@ -1,0 +1,3 @@
+scrapling[fetchers]
+beautifulsoup4
+lxml

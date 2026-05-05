@@ -4,16 +4,48 @@ import { z } from "zod";
 
 export const platformEnum = z.enum(["threads", "x", "instagram"]);
 
+/**
+ * プロキシ設定の構造化スキーマ。
+ * `server` は http/https/socks5 のいずれかの URL 形式を要求する
+ * (例: "http://proxy.example.com:8080", "socks5://user:pass@host:1080")。
+ */
+export const proxyConfigSchema = z.object({
+  server:   z.string().min(1).max(500),
+  username: z.string().max(200).optional(),
+  password: z.string().max(500).optional(),
+  label:    z.string().max(100).optional(),
+});
+
 export const createAccountSchema = z.object({
   platform: platformEnum,
   username: z.string().min(1).max(100),
   displayName: z.string().max(200).optional(),
   credentials: z.record(z.unknown()),
-  proxyConfig: z.record(z.unknown()).optional(),
+  proxyConfig: proxyConfigSchema.optional(),
+  affiliateUrl: z.string().url().max(2000).optional().nullable(),
+  affiliateLabel: z.string().max(60).optional().nullable(),
 });
 
 export const updateAccountSchema = createAccountSchema.partial().extend({
   status: z.enum(["active", "suspended", "rate_limited"]).optional(),
+});
+
+export const updateAffiliateSchema = z.object({
+  affiliateUrl: z.string().url().max(2000).nullable(),
+  affiliateLabel: z.string().max(60).nullable(),
+});
+
+/** プロキシ設定だけを更新するエンドポイント用 */
+export const updateProxySchema = z.object({
+  proxyConfig: proxyConfigSchema.nullable(),
+});
+
+/**
+ * Playwright storageState をアカウントの credentials に保存するためのスキーマ。
+ * x-login.ts CLI で出力される JSON をそのまま受け取る。
+ */
+export const uploadSessionSchema = z.object({
+  storageState: z.record(z.unknown()),
 });
 
 // === Posts ===

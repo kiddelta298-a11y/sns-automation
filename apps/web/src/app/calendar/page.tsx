@@ -6,6 +6,7 @@ import { getCalendarPosts, type ApiScheduledPost } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, Calendar, PlusCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/posts/platform-icon";
+import { LiveExecutionPanel } from "@/components/posts/live-execution-panel";
 import type { Platform } from "@/types/post";
 
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
@@ -103,6 +104,11 @@ export default function CalendarPage() {
             新規投稿
           </button>
         </Link>
+      </div>
+
+      {/* ── 実行中投稿ライブパネル ── */}
+      <div className="mt-6">
+        <LiveExecutionPanel />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">

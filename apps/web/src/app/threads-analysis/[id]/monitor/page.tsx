@@ -185,7 +185,7 @@ export default function MonitorPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <button onClick={() => router.push("/research")}
+          <button onClick={() => router.push("/threads-analysis")}
             className="rounded-lg p-2 transition-colors" style={{ color: "rgba(240,238,255,0.5)" }}>
             <ArrowLeft className="h-4 w-4" />
           </button>

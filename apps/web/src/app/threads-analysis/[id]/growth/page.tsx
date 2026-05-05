@@ -81,7 +81,7 @@ export default function GrowthPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push("/research")}
+        <button onClick={() => router.push("/threads-analysis")}
           className="rounded-lg p-2" style={{ color: "rgba(240,238,255,0.5)" }}>
           <ArrowLeft className="h-4 w-4" />
         </button>

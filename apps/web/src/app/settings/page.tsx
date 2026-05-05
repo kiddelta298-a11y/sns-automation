@@ -247,6 +247,17 @@ export default function SettingsPage() {
                       className="mt-1 w-40 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
 
+                  ) : field.type === "select" ? (
+                    <select
+                      value={values[field.key] ?? field.options?.[0]?.value ?? ""}
+                      onChange={e => handleChange(field.key, e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    >
+                      {field.options?.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+
                   ) : (
                     <input
                       type="text"

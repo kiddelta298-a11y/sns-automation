@@ -1,4 +1,6 @@
 import path from "node:path";
+import fs from "node:fs";
+import { chromium } from "playwright";
 import {
   BrowserSession,
   humanDelay,
@@ -22,18 +24,55 @@ const SELECTORS = {
     'button:has-text("Not Now"), button:has-text("後で"), button:has-text("Not now")',
 
   // 投稿（新規作成フロー）
-  newPostButton: '[aria-label="新規投稿"], [aria-label="New post"]',
-  fileInput: 'input[type="file"]',
+  // 左サイドナビの「新規投稿/New post」ボタン or リンク。
+  // クリックするとサブメニュー（"Post"/"Live video"/"Ad" など）が開く新UI。
+  newPostButton:
+    '[aria-label="新規投稿"], [aria-label="New post"], a[role="link"]:has-text("Create"), a[role="link"]:has-text("作成")',
+  // サブメニューの「投稿/Post」項目
+  newPostMenuItemPost:
+    'a[role="link"]:has-text("Post"):not(:has-text("Live")), a[role="link"]:has-text("投稿"):not(:has-text("ライブ"))',
+  fileInput: 'input[type="file"][accept*="image"], input[type="file"]',
   nextButton: 'button:has-text("次へ"), button:has-text("Next")',
   captionTextarea:
     'div[aria-label="キャプションを入力…"], div[aria-label="Write a caption..."], div[contenteditable="true"][role="textbox"]',
   shareButton:
     'button:has-text("シェア"), button:has-text("Share")',
+  // フィード作成画面の「リンクを追加/Add link」ボタン
+  addLinkButton:
+    'button:has-text("リンクを追加"), button:has-text("Add link"), [aria-label="Add link"], [aria-label="リンクを追加"]',
+  addLinkUrlInput:
+    'input[placeholder*="URL"], input[name="link-url"], input[type="url"]',
+  addLinkLabelInput:
+    'input[placeholder*="リンクの"], input[placeholder*="link"], input[name="link-label"], input[aria-label*="link"]',
+  addLinkDoneButton:
+    'button:has-text("完了"), button:has-text("Done"), button:has-text("保存"), button:has-text("Save")',
 
   // ストーリー作成フロー（モバイルUA使用）
-  storySectionLabel: 'text="ストーリーズ"',
-  storyFileInput: 'input[type="file"]',
-  storyShareButton: 'text="ストーリーズに追加"',
+  storySectionLabel:
+    'text="ストーリーズ", text="Your story", text="Add to story", text="Story", [aria-label*="ストーリー"], [aria-label*="story" i]',
+  storyFileInput: 'input[type="file"][accept*="avif"], input[type="file"][accept*="image"]',
+  storyShareButton:
+    'text="ストーリーズに追加", text="Share to story", text="Share to Story", text="Add to story", text="Your story", button:has-text("ストーリーズに追加"), button:has-text("Share to story"), button:has-text("Share to Story"), button:has-text("Add to story"), button:has-text("シェア"), [role="button"]:has-text("ストーリーズに追加"), [role="button"]:has-text("Share to story")',
+
+  // ストーリーエディタ ── テキストオーバーレイ
+  // button._aa3j: IG mobile web 2025-04 の Aa(テキスト)ボタン。aria-label なし、icon-only。
+  storyTextToolButton:
+    'button._aa3j, [aria-label="テキスト"], [aria-label="Text"], [data-testid="story-text-button"]',
+  storyTextConfirmButton:
+    'button:has-text("完了"), button:has-text("Done"), [aria-label="完了"], [aria-label="Done"]',
+
+  // ストーリーエディタ ── リンクスティッカー
+  // button._aa3h: IG mobile web 2025-04 のスタンプボタン。aria-label なし、icon-only。
+  storyStickerButton:
+    'button._aa3h, [aria-label="スタンプ"], [aria-label="Sticker"], [aria-label="ステッカー"], [data-testid="story-sticker-button"]',
+  storyLinkStickerOption:
+    '[aria-label="リンク"], [aria-label="Link"], button:has-text("リンク"), button:has-text("Link"), [data-testid="story-link-sticker"]',
+  storyLinkUrlInput:
+    'input[placeholder*="URL"], input[placeholder*="url"], input[type="url"], [data-testid="story-link-url-input"]',
+  storyLinkTextInput:
+    'input[placeholder*="リンクテキスト"], input[placeholder*="Link text"], input[placeholder*="Customize link"], [data-testid="story-link-text-input"]',
+  storyLinkDoneButton:
+    'button:has-text("完了"), button:has-text("Done"), [aria-label="完了"], [aria-label="Done"]',
 
   // 状態確認
   profileIcon:
@@ -45,6 +84,9 @@ const SELECTORS = {
 } as const;
 
 const BASE_URL = "https://www.instagram.com";
+const SESSIONS_DIR = path.resolve(process.env.SESSIONS_DIR ?? "./data/sessions");
+const STORY_MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+const SS_DIR = path.resolve("./data/screenshots");
 
 // ---------------------------------------------------------------
 // 型定義
@@ -59,6 +101,10 @@ export interface InstagramPostOptions {
   caption: string;
   /** 画像ファイルパス（最低1枚必須） */
   imagePaths: string[];
+  /** フィード投稿の「リンクを追加」機能で登録するURL（任意） */
+  affiliateUrl?: string;
+  /** リンクのボタン文言（任意。InstagramのCTAラベル、最大30字程度） */
+  affiliateLabel?: string;
 }
 
 export interface InstagramPostResult {
@@ -72,6 +118,10 @@ export interface InstagramStoryOptions {
   imagePath: string;
   /** テキストオーバーレイ（任意） */
   textOverlay?: string;
+  /** アフィリエイトリンクURL（スティッカーで貼る URL、任意） */
+  affiliateLink?: string;
+  /** リンクスティッカーに添えるテキスト（任意） */
+  linkText?: string;
 }
 
 export interface InstagramStoryResult {
@@ -237,8 +287,18 @@ export class InstagramBrowser {
           await humanDelay(2000, 3500);
 
           // 新規投稿ボタンをクリック
-          await this.page.click(SELECTORS.newPostButton);
+          await this.page.locator(SELECTORS.newPostButton).first().click();
           await humanDelay(1500, 3000);
+
+          // 新UIではサブメニュー（"Post"/"Live"/"Ad"）が開く。
+          // 「Post/投稿」を選択（旧UIでは無くてもfile inputが直接出るため、見つからない場合はスキップ）
+          const postMenuItem = await this.page
+            .locator(SELECTORS.newPostMenuItemPost)
+            .first();
+          if (await postMenuItem.count() > 0) {
+            await postMenuItem.click({ timeout: 5000 }).catch(() => {});
+            await humanDelay(1500, 2500);
+          }
 
           // 画像をアップロード（file input 経由）
           await this.attachImages(opts.imagePaths);
@@ -262,6 +322,11 @@ export class InstagramBrowser {
               opts.caption,
             );
             await humanDelay(800, 1500);
+          }
+
+          // 「リンクを追加」機能で affiliate URL/Label を登録（任意）
+          if (opts.affiliateUrl) {
+            await this._addPostLink(opts.affiliateUrl, opts.affiliateLabel);
           }
 
           // 投稿前の最終遅延
@@ -365,6 +430,48 @@ export class InstagramBrowser {
   }
 
   // =============================================================
+  // フィード投稿 ── 「リンクを追加」機能でURL/ラベルを登録
+  // =============================================================
+  private async _addPostLink(url: string, label?: string): Promise<void> {
+    console.log("[instagram] Adding post link...");
+    const linkBtn = this.page.locator(SELECTORS.addLinkButton).first();
+    if (await linkBtn.count() === 0) {
+      console.warn("[instagram] 'Add link' button not found, skipping");
+      return;
+    }
+    try {
+      await linkBtn.click({ timeout: 5000 });
+      await humanDelay(800, 1500);
+
+      const urlInput = this.page.locator(SELECTORS.addLinkUrlInput).first();
+      await urlInput.waitFor({ timeout: 8000 });
+      await urlInput.click();
+      await urlInput.fill(url);
+      await humanDelay(400, 800);
+
+      if (label) {
+        const labelInput = this.page.locator(SELECTORS.addLinkLabelInput).first();
+        if (await labelInput.count() > 0) {
+          await labelInput.click({ timeout: 3000 }).catch(() => {});
+          await labelInput.fill(label).catch(() => {});
+          await humanDelay(300, 600);
+        }
+      }
+
+      const doneBtn = this.page.locator(SELECTORS.addLinkDoneButton).first();
+      if (await doneBtn.count() > 0) {
+        await doneBtn.click().catch(() => {});
+      } else {
+        await this.page.keyboard.press("Enter");
+      }
+      await humanDelay(800, 1500);
+      console.log("[instagram] Post link added ✓");
+    } catch (err) {
+      console.warn("[instagram] _addPostLink failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // =============================================================
   // ガード
   // =============================================================
   private async checkRateLimit(): Promise<void> {
@@ -375,7 +482,7 @@ export class InstagramBrowser {
   }
 
   // =============================================================
-  // ストーリーズ投稿（モバイルUA使用）
+  // ストーリーズ投稿（モバイルUA + plain chromium）
   // =============================================================
   async postStory(
     opts: InstagramStoryOptions,
@@ -384,17 +491,42 @@ export class InstagramBrowser {
       return { success: false, error: "Image path is required for story" };
     }
 
-    // ストーリー投稿はモバイルUAが必要なため、専用セッションで実行
-    const mobileSession = new BrowserSession({
-      sessionKey: `instagram_${this.credentials.username}`,
-      ...this.sessionOpts,
-      mobile: true,
+    // playwright-extra (stealth) を使わず plain chromium を使う。
+    // 理由: stealth プラグインが Instagram のモバイルページ描画を阻害し、
+    //       file input が見つからなくなるため。
+    // 実証: test-story-direct.mjs で plain chromium + mobile UA が完全動作。
+    const sessionFile = path.join(SESSIONS_DIR, `instagram_${this.credentials.username}.json`);
+    const headless = this.sessionOpts.headless ?? true;
+
+    const browser = await chromium.launch({
+      headless,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-infobars"],
     });
 
-    try {
-      await mobileSession.init();
-      const page = mobileSession.page;
+    const ssPath = (name: string) =>
+      path.join(SS_DIR, `${name}-${Date.now()}.png`);
+    const screenshot = async (page: Page, name: string) => {
+      fs.mkdirSync(SS_DIR, { recursive: true });
+      await page.screenshot({ path: ssPath(name) }).catch(() => {});
+    };
 
+    const storageState = fs.existsSync(sessionFile)
+      ? JSON.parse(fs.readFileSync(sessionFile, "utf8"))
+      : undefined;
+
+    const ctx = await browser.newContext({
+      userAgent: STORY_MOBILE_UA,
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+      locale: "ja-JP",
+      timezoneId: "Asia/Tokyo",
+      ...(storageState ? { storageState } : {}),
+    });
+    const page = await ctx.newPage();
+
+    try {
       // ログイン確認（既存セッションを流用）
       await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 15_000 });
       await humanDelay(2000, 4000);
@@ -406,7 +538,7 @@ export class InstagramBrowser {
 
       return await withRetry(
         async () => {
-          console.log("[instagram] Starting story post (mobile flow)...");
+          console.log("[instagram] Starting story post (plain chromium, mobile UI)...");
 
           // ホームに移動
           await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 15_000 });
@@ -425,54 +557,138 @@ export class InstagramBrowser {
             }
           }
 
-          // 「ストーリーズ」セクションラベルをクリック（ユーザー自身のストーリー追加ボタン）
-          const storyLabel = await page.waitForSelector(
-            SELECTORS.storySectionLabel,
-            { timeout: 10_000 },
-          );
-          await storyLabel.click({ force: true });
-          await humanDelay(1500, 2500);
-          console.log("[instagram] Clicked story section");
+          await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+          await screenshot(page, "ig-story-home-before");
 
-          // ファイルインプットを取得
-          const fileInput = await page.waitForSelector(
-            SELECTORS.storyFileInput,
-            { timeout: 10_000, state: "attached" },
-          );
+          // モバイルUIのホームページには input[type="file"][accept*="avif"] が存在する。
+          // el.click() を先に呼んでユーザー操作をシミュレートしてから setInputFiles() すること。
+          // そうしないと Instagram が file input を無視して /create/story/ へ遷移しない。
+          console.log("[instagram] Looking for story file input on home page...");
+          const allInputs = await page.$$("input[type=\"file\"]");
+          console.log(`[instagram] Found ${allInputs.length} file inputs`);
+
+          let fileInput = null;
+          for (const inp of allInputs) {
+            const accept = await inp.getAttribute("accept");
+            if (accept?.includes("avif") || accept?.includes("image")) {
+              fileInput = inp;
+              break;
+            }
+          }
+
           if (!fileInput) {
-            throw new Error("Story file input not found");
+            const inputsInfo = await page.evaluate(() =>
+              Array.from(document.querySelectorAll("input")).map(i => ({
+                type: (i as HTMLInputElement).type,
+                accept: (i as HTMLInputElement).accept,
+              }))
+            );
+            console.error("[instagram] Available inputs:", JSON.stringify(inputsInfo));
+            throw new Error(`Story file input not found. URL=${page.url()}`);
           }
 
           const resolvedPath = path.resolve(opts.imagePath);
+          // 直接 setInputFiles を呼ぶ。test-story-direct.mjs で plain chromium + mobile UA 動作確認済。
+          // 注意: el.click() を先に呼ぶと Instagram が file input を無視して遷移しなくなる。
           await fileInput.setInputFiles(resolvedPath);
           await humanDelay(3000, 5000);
           console.log(`[instagram] Attached story image: ${opts.imagePath}`);
+          await screenshot(page, "ig-story-image-attached");
 
-          // ストーリーエディタ（/create/story/）への遷移を確認
-          await page.waitForFunction(
-            () => location.href.includes("/create/story/"),
-            { timeout: 15_000 },
-          );
+          // setInputFiles 後、/create/story/ に遷移するのを待つ
+          if (!page.url().includes("/create/story/")) {
+            await page.waitForFunction(
+              () => location.href.includes("/create/story/"),
+              { timeout: 25_000 },
+            );
+          }
           console.log("[instagram] Story editor opened ✓");
-          await humanDelay(1000, 2000);
+          // エディタの描画完了を待つ（ストーリーズに追加ボタンが表示されるまで ~10s かかる）
+          await humanDelay(8000, 12000);
+          await screenshot(page, "ig-story-editor-loaded");
+
+          // textOverlay 指定時: テキストオーバーレイを追加
+          if (opts.textOverlay) {
+            await this._addStoryTextOverlay(page, opts.textOverlay);
+            // テキスト確定後にエディタが再描画されるまで待つ
+            await humanDelay(2000, 3000);
+            await screenshot(page, "ig-story-after-text");
+            console.log("[instagram] Post-text URL:", page.url());
+          }
+
+          // affiliateLink 指定時: configure_to_story リクエストに story_cta を注入
+          // スタンプトレイは headless では canvas レンダリングのためアクセス不可。
+          // route interceptor で API レベルでリンクスタンプを追加する。
+          if (opts.affiliateLink) {
+            await page.route("**/configure_to_story/**", async (route) => {
+              const original = route.request().postData() ?? "";
+              const params = new URLSearchParams(original);
+              params.set(
+                "story_cta",
+                JSON.stringify([
+                  {
+                    links: [
+                      {
+                        linkType: 1,
+                        webUri: opts.affiliateLink!,
+                        androidClass: "",
+                        appInstallObjectStoreUrl: "",
+                        callToActionTitle: opts.linkText ?? "",
+                      },
+                    ],
+                  },
+                ])
+              );
+              console.log("[instagram] Injecting story_cta with affiliate link");
+              await route.continue({ postData: params.toString() });
+            });
+          }
 
           // 「ストーリーズに追加」ボタンをクリック
-          const shareBtn = await page.waitForSelector(
-            SELECTORS.storyShareButton,
-            { timeout: 10_000 },
-          );
+          // waitForSelector でのカンマ区切り text= セレクタは CSS OR として解釈され
+          // text engine が効かないため、セレクタを順に試す
+          const shareBtnCandidates = [
+            'button._aswp',
+            'text="ストーリーズに追加"',
+            'button:has-text("ストーリーズに追加")',
+            'button:has([aria-label="ストーリーズに追加"])',
+            'text="Share to story"',
+            'button:has-text("Share to story")',
+          ];
+          let shareBtn: Awaited<ReturnType<typeof page.waitForSelector>> | null = null;
+          const shareBtnDeadline = Date.now() + 60_000;
+          while (!shareBtn && Date.now() < shareBtnDeadline) {
+            for (const sel of shareBtnCandidates) {
+              shareBtn = await page.$(sel).catch(() => null);
+              if (shareBtn) { console.log(`[instagram] Share button found: ${sel}`); break; }
+            }
+            if (!shareBtn) await humanDelay(500, 800);
+          }
+          if (!shareBtn) throw new Error("Share button not found after 60s");
           await shareBtn.click();
-          console.log("[instagram] Clicked 'ストーリーズに追加'");
+          console.log("[instagram] Clicked share button");
 
-          // アップロード完了まで待機（/create/story/ から離脱）
-          await page.waitForFunction(
-            () => !location.href.includes("/create/"),
-            { timeout: 30_000 },
-          );
-          await humanDelay(1000, 2000);
+          // アップロード完了の検知
+          await Promise.race([
+            page.waitForFunction(
+              () => !location.href.includes("/create/"),
+              { timeout: 60_000 },
+            ),
+            page.waitForSelector(
+              'text="ストーリーズをシェアしました", text="Story shared", text="Your story has been shared"',
+              { timeout: 60_000 },
+            ).then(() => undefined),
+          ]).catch(async () => {
+            console.warn("[instagram] Story share completion not detected, navigating home");
+            await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeout: 15_000 });
+          });
+          await humanDelay(1500, 2500);
 
           // セッション保存
-          await mobileSession.saveSession();
+          const state = await ctx.storageState();
+          fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+          fs.writeFileSync(sessionFile, JSON.stringify(state, null, 2));
+          console.log(`[instagram] Session saved: ${sessionFile}`);
 
           console.log("[instagram] Story posted successfully");
           return { success: true };
@@ -482,11 +698,130 @@ export class InstagramBrowser {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`[instagram] Story post failed: ${errorMessage}`);
-      await mobileSession.screenshot("ig-story-error");
+      await page.screenshot({ path: ssPath("ig-story-error") }).catch(() => {});
       return { success: false, error: errorMessage };
     } finally {
-      await mobileSession.close();
+      await browser.close();
     }
+  }
+
+  // =============================================================
+  // ストーリーエディタ ── テキストオーバーレイ
+  // =============================================================
+  private async _addStoryTextOverlay(page: Page, text: string): Promise<void> {
+    console.log("[instagram] Adding text overlay...");
+
+    // テキストツール（Aa ボタン）をクリック
+    const textBtn = await page.waitForSelector(SELECTORS.storyTextToolButton, {
+      timeout: 8_000,
+    }).catch(() => null);
+    if (!textBtn) {
+      console.warn("[instagram] Text tool button not found, skipping textOverlay");
+      return;
+    }
+    await textBtn.click();
+    await humanDelay(800, 1500);
+
+    // テキスト入力（フォーカスされた入力欄にそのまま入力）
+    await page.keyboard.type(text, { delay: 60 });
+    await humanDelay(500, 1000);
+
+    // 完了ボタンをクリックしてテキストを確定
+    const confirmBtn = await page.$(SELECTORS.storyTextConfirmButton);
+    if (confirmBtn) {
+      await confirmBtn.click();
+      await humanDelay(800, 1500);
+    } else {
+      // 完了ボタンが見つからない場合は Enter で確定を試みる
+      await page.keyboard.press("Enter");
+      await humanDelay(800, 1500);
+    }
+
+    // テキスト編集モーダルを確実に閉じるため、画像中央領域をクリックしてフォーカスを外す
+    // （これをしないと「ストーリーズに追加」ボタンが背景にあり押せない状態になる）
+    try {
+      const viewport = page.viewportSize();
+      if (viewport) {
+        await page.mouse.click(viewport.width / 2, viewport.height / 3);
+        await humanDelay(500, 1000);
+      }
+      await page.keyboard.press("Escape").catch(() => {});
+      await humanDelay(300, 600);
+    } catch { /* best-effort */ }
+
+    console.log("[instagram] Text overlay added ✓");
+  }
+
+  // =============================================================
+  // ストーリーエディタ ── アフィリエイトリンクスティッカー
+  // =============================================================
+  private async _addStoryAffiliateLink(
+    page: Page,
+    url: string,
+    linkText?: string,
+  ): Promise<void> {
+    console.log("[instagram] Adding affiliate link sticker...");
+
+    // スティッカーアイコン（顔文字マーク）をクリック
+    const stickerBtn = await page.waitForSelector(SELECTORS.storyStickerButton, {
+      timeout: 8_000,
+    }).catch(() => null);
+    if (!stickerBtn) {
+      console.warn("[instagram] Sticker button not found, skipping affiliateLink");
+      return;
+    }
+    await stickerBtn.click();
+    await humanDelay(1000, 2000);
+
+    // スティッカートレイから「リンク」を選択
+    const linkSticker = await page.waitForSelector(SELECTORS.storyLinkStickerOption, {
+      timeout: 8_000,
+    }).catch(() => null);
+    if (!linkSticker) {
+      console.warn("[instagram] Link sticker option not found, skipping affiliateLink");
+      // トレイを閉じるために Escape
+      await page.keyboard.press("Escape");
+      return;
+    }
+    await linkSticker.click();
+    await humanDelay(800, 1500);
+
+    // URL 入力フィールドにリンクを入力
+    const urlInput = await page.waitForSelector(SELECTORS.storyLinkUrlInput, {
+      timeout: 8_000,
+    }).catch(() => null);
+    if (!urlInput) {
+      console.warn("[instagram] Link URL input not found, skipping affiliateLink");
+      await page.keyboard.press("Escape");
+      return;
+    }
+    await urlInput.click();
+    await humanType(page, SELECTORS.storyLinkUrlInput, url);
+    await humanDelay(500, 1000);
+
+    // linkText が指定されていればリンクテキストフィールドにも入力
+    if (linkText) {
+      const textInput = await page.$(SELECTORS.storyLinkTextInput);
+      if (textInput) {
+        await textInput.click();
+        await humanType(page, SELECTORS.storyLinkTextInput, linkText);
+        await humanDelay(500, 1000);
+      }
+    }
+
+    // 完了ボタンでスティッカーを配置
+    const doneBtn = await page.waitForSelector(SELECTORS.storyLinkDoneButton, {
+      timeout: 8_000,
+    }).catch(() => null);
+    if (doneBtn) {
+      await doneBtn.click();
+      await humanDelay(800, 1500);
+    } else {
+      await page.keyboard.press("Enter");
+      await humanDelay(800, 1500);
+    }
+
+    console.log("[instagram] Affiliate link sticker added ✓");
   }
 
   // =============================================================

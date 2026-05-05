@@ -8,7 +8,8 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { message?: string }).message ?? `API error ${res.status}`);
+    const e = err as { message?: string; error?: string };
+    throw new Error(e.message ?? e.error ?? `API error ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -184,6 +185,142 @@ export function retryPost(postId: string) {
 
 export function getCalendarPosts(from: string, to: string) {
   return apiFetch<ApiScheduledPost[]>(`/api/posts/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+}
+
+// ---- Scheduled posts status (real-time monitoring) ----
+
+export type ExecStatus = "pending" | "executing" | "completed" | "failed";
+
+export interface ScheduledPostStatusItem {
+  id: string;
+  postId: string;
+  scheduledAt: string;
+  executedAt: string | null;
+  status: ExecStatus;
+  retryCount: number | null;
+  errorMessage: string | null;
+  post: {
+    id: string;
+    accountId: string;
+    platform: string;
+    contentText: string | null;
+    account?: { username: string; displayName: string | null } | null;
+  };
+}
+
+export interface ScheduledPostsStatusResponse {
+  items: ScheduledPostStatusItem[];
+  generatedAt: string;
+}
+
+export function getScheduledPostsStatus(window: { from?: string; to?: string } = {}) {
+  const qs = new URLSearchParams();
+  if (window.from) qs.set("from", window.from);
+  if (window.to) qs.set("to", window.to);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch<ScheduledPostsStatusResponse>(`/api/scheduled-posts/status${suffix}`);
+}
+
+// ---- Scheduled posts: live execution ----
+
+export type LiveStage = "login" | "compose" | "publish" | "done";
+
+export interface ScheduledPostLive {
+  id: string;
+  postId: string;
+  status: string;
+  stage: LiveStage;
+  progressPct: number;
+  screenshotPath: string | null;
+  startedAt: string | null;
+  scheduledAt: string;
+  post: {
+    platform: string;
+    contentText: string | null;
+    account?: { username: string; displayName: string | null } | null;
+  };
+}
+
+export interface ScheduledPostsLiveResponse {
+  items: ScheduledPostLive[];
+  generatedAt: string;
+}
+
+export function getScheduledPostsLive() {
+  return apiFetch<ScheduledPostsLiveResponse>(`/api/scheduled-posts/live`);
+}
+
+export interface ScheduledPostScreenshot {
+  path: string;
+  capturedAt: string;
+  stage: LiveStage;
+}
+
+export interface ScheduledPostDetail {
+  id: string;
+  postId: string;
+  scheduledAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  status: string;
+  stage: LiveStage | null;
+  progressPct: number | null;
+  retryCount: number | null;
+  errorMessage: string | null;
+  screenshots: ScheduledPostScreenshot[];
+  post: {
+    id: string;
+    platform: string;
+    contentText: string | null;
+    linkUrl: string | null;
+    platformPostId: string | null;
+    attachments?: { url: string; type: "image" | "video" }[];
+    account?: { username: string; displayName: string | null } | null;
+  };
+}
+
+export function getScheduledPostByPostId(postId: string) {
+  return apiFetch<ScheduledPostDetail>(`/api/scheduled-posts/${encodeURIComponent(postId)}`);
+}
+
+// ---- Post history ----
+
+export interface PostHistoryItem {
+  id: string;
+  platform: string;
+  contentText: string | null;
+  status: "posted" | "failed";
+  postedAt: string | null;
+  scheduledAt: string | null;
+  errorMessage: string | null;
+  platformPostId: string | null;
+  account?: { username: string; displayName: string | null } | null;
+}
+
+export interface PostHistoryResponse {
+  items: PostHistoryItem[];
+  total: number;
+}
+
+export interface PostHistoryQuery {
+  platform?: string; // "all" | "threads" | "x" | "instagram"
+  from?: string;     // ISO
+  to?: string;       // ISO
+  status?: "all" | "posted" | "failed";
+  limit?: number;
+  offset?: number;
+}
+
+export function getPostHistory(query: PostHistoryQuery = {}) {
+  const qs = new URLSearchParams();
+  if (query.platform && query.platform !== "all") qs.set("platform", query.platform);
+  if (query.from) qs.set("from", query.from);
+  if (query.to) qs.set("to", query.to);
+  if (query.status && query.status !== "all") qs.set("status", query.status);
+  if (query.limit) qs.set("limit", String(query.limit));
+  if (query.offset) qs.set("offset", String(query.offset));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch<PostHistoryResponse>(`/api/post-history${suffix}`);
 }
 
 export function updatePost(id: string, data: {
@@ -649,10 +786,18 @@ export function saveSettings(updates: Record<string, string>) {
 
 // ---- ジャンル別リサーチ ----
 
+export interface ApiBuzzThresholds {
+  minLikes: number;
+  minViews: number;
+  minReplies: number;
+  minReposts: number;
+}
+
 export interface ApiAdultGenre {
   id: string;
   name: string;
   description: string | null;
+  buzzThresholds?: ApiBuzzThresholds | null;
   createdAt: string;
   accountCount?: number;
   latestProfile?: { status: string; updatedAt: string } | null;
@@ -690,6 +835,9 @@ export interface ApiMonitoredPost {
   postedAt: string | null;
   firstSeenAt: string;
   lastSnapshotAt: string;
+  // 自動投稿ステータス: API が posts テーブル / scheduled_posts と JOIN して算出する
+  postingStatus?: "posted" | "scheduled" | "unposted";
+  autoPostedAt?: string | null;
 }
 
 export interface ApiPostScoreSnapshot {
@@ -790,11 +938,25 @@ export function deleteReferenceAccount(genreId: string, accountId: string) {
 }
 
 export function analyzeGenre(genreId: string) {
-  return apiFetch<{ profileId: string; status: string }>(
+  return apiFetch<{ profileId: string; status: string; jobId?: string }>(
     `/api/research/genres/${genreId}/analyze`,
     { method: "POST" },
   );
 }
+
+export interface AnalyzeJobStatus {
+  id: string;
+  state: string;
+  progress: unknown;
+  failedReason: string | null;
+  timestamp: number;
+  finishedOn: number | null;
+}
+
+export function getAnalyzeJobStatus(jobId: string) {
+  return apiFetch<AnalyzeJobStatus>(`/api/research/analyze-jobs/${jobId}`);
+}
+
 
 export function getGenreProfile(genreId: string) {
   return apiFetch<ApiGenreProfile | null>(`/api/research/genres/${genreId}/profile`);
@@ -808,15 +970,185 @@ export function getMonitoredPosts(genreId: string, limit = 50) {
   return apiFetch<ApiMonitoredPost[]>(`/api/research/genres/${genreId}/posts?limit=${limit}`);
 }
 
+export function getOwnThreadsAccounts() {
+  return apiFetch<ApiAccount[]>("/api/accounts").then((accounts) =>
+    accounts.filter((a) => a.platform === "threads" && a.status === "active"),
+  );
+}
+
+export interface MonitoredPostsFilter {
+  limit?: number;
+  minLikes?: number;
+  maxLikes?: number;
+  minReplies?: number;
+  maxReplies?: number;
+  minViews?: number;
+  maxViews?: number;
+  minReposts?: number;
+  maxReposts?: number;
+  since?: string;
+  until?: string;
+  applyBuzzThreshold?: boolean;
+  orderBy?: "buzz" | "likes" | "views" | "replies" | "reposts" | "postedAt";
+}
+
+export function getMonitoredPostsFiltered(genreId: string, filter: MonitoredPostsFilter = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filter)) {
+    if (v === undefined || v === null || v === "") continue;
+    qs.set(k, String(v));
+  }
+  const query = qs.toString();
+  return apiFetch<ApiMonitoredPost[]>(
+    `/api/research/genres/${genreId}/posts${query ? `?${query}` : ""}`,
+  );
+}
+
+export function bulkAddReferenceAccounts(
+  genreId: string,
+  data: { usernames: string[]; platform?: string },
+) {
+  return apiFetch<{ added: ApiReferenceAccount[]; skipped: string[] }>(
+    `/api/research/genres/${genreId}/accounts/bulk`,
+    { method: "POST", body: JSON.stringify(data) },
+  );
+}
+
+export function updateAdultGenre(
+  genreId: string,
+  data: { name?: string; description?: string | null; buzzThresholds?: Partial<ApiBuzzThresholds> },
+) {
+  return apiFetch<ApiAdultGenre>(`/api/research/genres/${genreId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export interface BulkRepostResult {
+  ok: boolean;
+  requestedCount: number;
+  scheduledCount: number;
+  accountId: string;
+  accountUsername: string;
+  intervalMinutes: number;
+  firstAt?: string;
+  lastAt?: string;
+  items: Array<{
+    monitoredPostId: string;
+    postId: string;
+    scheduledPostId: string;
+    scheduledAt: string;
+  }>;
+}
+
+export function queueBulkRepost(
+  genreId: string,
+  data: {
+    accountIds?: string[];
+    accountId?: string;
+    count: number;
+    intervalMinutes: number;
+    startAt?: string;
+    orderBy?: "buzz" | "likes" | "views" | "replies" | "reposts";
+    applyBuzzThreshold?: boolean;
+  },
+) {
+  return apiFetch<BulkRepostResult>(
+    `/api/research/genres/${genreId}/queue-bulk-repost`,
+    { method: "POST", body: JSON.stringify(data) },
+  );
+}
+
+export interface ResearchAndPostResult {
+  ok: boolean;
+  monitorJobId: string;
+  pendingAutoPost: {
+    count: number;
+    intervalMinutes: number;
+    accountIds: string[];
+    orderBy: string;
+  };
+}
+
+export function startResearchAndPost(
+  genreId: string,
+  data: {
+    accountIds: string[];
+    count: number;
+    intervalMinutes: number;
+    orderBy?: "buzz" | "likes" | "views" | "replies" | "reposts";
+    startAt?: string;
+    applyBuzzThreshold?: boolean;
+    monitorLimit?: number;
+  },
+) {
+  return apiFetch<ResearchAndPostResult>(
+    `/api/research/genres/${genreId}/research-and-post`,
+    { method: "POST", body: JSON.stringify(data) },
+  );
+}
+
 export function getPostScoreHistory(postId: string) {
   return apiFetch<ApiPostScoreSnapshot[]>(`/api/research/posts/${postId}/history`);
 }
 
-export function triggerMonitor(genreId: string) {
-  return apiFetch<{ jobId: string; status: string }>(
+export interface MonitorFilterInput {
+  minLikes?: number;
+  maxLikes?: number;
+  minReplies?: number;
+  maxReplies?: number;
+  minViews?: number;
+  maxViews?: number;
+  minReposts?: number;
+  maxReposts?: number;
+  applyBuzzThreshold?: boolean;
+}
+
+export function triggerMonitor(
+  genreId: string,
+  opts: {
+    limit?: number;
+    postDelayMs?: [number, number];
+    filter?: MonitorFilterInput;
+  } = {},
+) {
+  return apiFetch<{ jobId: string; status: string; limit: number }>(
     `/api/research/genres/${genreId}/monitor`,
-    { method: "POST" },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        limit: opts.limit,
+        postDelayMs: opts.postDelayMs,
+        filter: opts.filter,
+      }),
+    },
   );
+}
+
+export interface MonitorJobStatus {
+  id: string;
+  state: string;
+  progress: {
+    phase?: "init" | "scraping-profile" | "scraping-posts" | "done";
+    totalAccounts?: number;
+    accountIndex?: number;
+    currentAccount?: string | null;
+    targetMatches?: number;
+    matchedCount?: number;
+    processedCount?: number;
+    message?: string;
+    newPosts?: number;
+    updatedPosts?: number;
+  } | number | null;
+  data: { genreId?: string; limit?: number };
+  failedReason: string | null;
+  returnvalue: unknown;
+  timestamp: number;
+  finishedOn: number | null;
+}
+
+export function getMonitorJobStatus(jobId: string) {
+  return apiFetch<MonitorJobStatus>(`/api/research/monitor-jobs/${jobId}`);
 }
 
 // ---- スコア監視 ----
@@ -1052,5 +1384,209 @@ export function postMentorChat(messages: MentorMessage[], scenario?: MentorScena
 export function getMentorHealth() {
   return apiFetch<{ ok: boolean; skill_dir: string; context_chars: number; gemini_key: boolean; error?: string }>(
     `/api/mentor/health`,
+  );
+}
+
+// ---- リサーチ自動投稿 ----
+
+export function getOwnAccounts() {
+  return apiFetch<ApiAccount[]>("/api/accounts?platform=threads");
+}
+
+export interface ApiAutoPostResult {
+  ok: boolean;
+  scheduledCount: number;
+  accountIds: string[];
+  intervalMinutes: number;
+  maxPosts: number;
+  posts?: Array<{
+    postId: string;
+    scheduledAt: string;
+    accountUsername: string;
+    contentPreview: string;
+    monitoredPostId: string;
+  }>;
+}
+
+export interface AutoPostStatusResult {
+  total: number;
+  pending: number;
+  processing: number;
+  done: number;
+  failed: number;
+  items: Array<{
+    postId: string;
+    status: string;
+    scheduledAt: string | null;
+    accountUsername: string;
+    contentPreview: string;
+    errorMessage: string | null;
+  }>;
+}
+
+export function getAutoPostStatus(genreId: string, postIds: string[]) {
+  return apiFetch<AutoPostStatusResult>(
+    `/api/research/genres/${genreId}/auto-post/status?postIds=${postIds.join(",")}`,
+  );
+}
+
+export interface AutoPostEngagementFilter {
+  minLikes?: number;
+  maxLikes?: number;
+  minReplies?: number;
+  maxReplies?: number;
+  minViews?: number;
+  maxViews?: number;
+  minReposts?: number;
+  maxReposts?: number;
+}
+
+// ---- Instagram Stories ----
+
+export interface InstagramStoryUpload {
+  filename: string;
+  url: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export function getInstagramStoryUploads() {
+  return apiFetch<InstagramStoryUpload[]>("/api/instagram/stories/uploads");
+}
+
+export interface PostInstagramStoryInput {
+  accountId: string;
+  imagePath: string;
+  caption?: string;
+  affiliateUrl?: string;
+  linkText?: string;
+}
+
+export function postInstagramStory(data: PostInstagramStoryInput) {
+  return apiFetch<{ ok: boolean; storyId?: string }>("/api/instagram/story", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ---- Instagram Feed (folder-driven posts) ----
+
+export interface InstagramPendingImage {
+  filename: string;
+  path: string;
+  size: number;
+  updatedAt: string;
+  meta: {
+    caption?: string;
+    affiliateUrl?: string;
+    affiliateLabel?: string;
+    platforms?: ("feed" | "story")[];
+  } | null;
+}
+
+export function getInstagramPendingImages(account: string) {
+  return apiFetch<{ images: InstagramPendingImage[] }>(
+    `/api/instagram/posts/pending?account=${encodeURIComponent(account)}`,
+  );
+}
+
+export interface InstagramFromFolderInput {
+  account: string;
+  filenames?: string[];
+  modes?: ("feed" | "story")[];
+  intervalSec?: number;
+  headless?: boolean;
+  captionOverride?: string;
+  affiliateUrlOverride?: string;
+  affiliateLabelOverride?: string;
+}
+
+export interface InstagramFromFolderResult {
+  enqueued: { postId: string; jobId: string | undefined; filename: string }[];
+  count: number;
+  intervalSec: number;
+  modes: ("feed" | "story")[];
+}
+
+export function postInstagramFromFolder(data: InstagramFromFolderInput) {
+  return apiFetch<InstagramFromFolderResult>("/api/instagram/posts/from-folder", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ---- Scraper Engine ----
+
+export type ScraperEngine = "playwright" | "scrapling";
+
+export interface ScraperEngineResponse {
+  engine: ScraperEngine;
+}
+
+export function getScraperEngine() {
+  return apiFetch<ScraperEngineResponse>("/api/scraper-engine");
+}
+
+export function setScraperEngine(engine: ScraperEngine) {
+  return apiFetch<ScraperEngineResponse>("/api/scraper-engine", {
+    method: "POST",
+    body: JSON.stringify({ engine }),
+  });
+}
+
+// ---- Research Auto Post ----
+
+export function startResearchAutoPost(
+  genreId: string,
+  data: {
+    accountIds: string[];
+    intervalMinutes: number;
+    maxPosts: number;
+    orderBy?: "buzz" | "likes" | "views" | "replies" | "reposts";
+    filter?: AutoPostEngagementFilter;
+    /** true: 画像付き投稿も対象に含める（テキスト+画像で投稿） */
+    includeImagePosts?: boolean;
+  },
+) {
+  return apiFetch<ApiAutoPostResult>(`/api/research/genres/${genreId}/auto-post`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function startResearchAutoPostMulti(data: {
+  genreIds: string[];
+  accountIds: string[];
+  intervalMinutes: number;
+  maxPosts: number;
+  orderBy?: "buzz" | "likes" | "views" | "replies" | "reposts";
+  filter?: AutoPostEngagementFilter;
+  includeImagePosts?: boolean;
+}) {
+  return apiFetch<ApiAutoPostResult>(`/api/research/auto-post-multi`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function getAutoPostStatusMulti(postIds: string[]) {
+  return apiFetch<AutoPostStatusResult>(
+    `/api/research/auto-post-multi/status?postIds=${postIds.join(",")}`,
+  );
+}
+
+export interface ApiPostMetricsHistoryPoint {
+  id: string;
+  collectedAt: string;
+  likes: number;
+  reposts: number;
+  replies: number;
+  views: number;
+  profileVisits: number;
+}
+
+export function getPostMetricsHistory(postId: string) {
+  return apiFetch<ApiPostMetricsHistoryPoint[]>(
+    `/api/research/performance/post/${postId}/history`,
   );
 }

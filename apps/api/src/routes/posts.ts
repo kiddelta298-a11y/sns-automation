@@ -42,6 +42,45 @@ postsRouter.get("/", zValidator("query", paginationSchema), async (c) => {
   return c.json(results);
 });
 
+// GET /api/posts/errors — 失敗した投稿の一覧
+postsRouter.get("/errors", async (c) => {
+  const rows = await db.query.scheduledPosts.findMany({
+    where: (sp, { eq }) => eq(sp.status, "failed"),
+    with: {
+      post: {
+        with: { account: true },
+      },
+    },
+    orderBy: (sp, { desc }) => [desc(sp.scheduledAt)],
+    limit: 50,
+  });
+  return c.json(rows);
+});
+
+// GET /api/posts/calendar?from=ISO&to=ISO — カレンダー用予約投稿一覧
+postsRouter.get("/calendar", async (c) => {
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+
+  const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const toDate = to ? new Date(to) : new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+
+  const rows = await db.query.scheduledPosts.findMany({
+    where: and(
+      gte(scheduledPosts.scheduledAt, fromDate),
+      lte(scheduledPosts.scheduledAt, toDate),
+    ),
+    with: {
+      post: {
+        with: { account: true },
+      },
+    },
+    orderBy: (sp, { asc }) => [asc(sp.scheduledAt)],
+  });
+
+  return c.json(rows);
+});
+
 // GET /api/posts/:id — 投稿詳細
 postsRouter.get("/:id", async (c) => {
   const id = c.req.param("id");
@@ -82,21 +121,6 @@ postsRouter.delete("/:id", async (c) => {
   return c.json({ message: "Deleted" });
 });
 
-// GET /api/posts/errors — 失敗した投稿の一覧
-postsRouter.get("/errors", async (c) => {
-  const rows = await db.query.scheduledPosts.findMany({
-    where: (sp, { eq }) => eq(sp.status, "failed"),
-    with: {
-      post: {
-        with: { account: true },
-      },
-    },
-    orderBy: (sp, { desc }) => [desc(sp.scheduledAt)],
-    limit: 50,
-  });
-  return c.json(rows);
-});
-
 // POST /api/posts/:id/retry — 失敗した予約投稿をリトライ
 postsRouter.post("/:id/retry", async (c) => {
   const id = c.req.param("id");
@@ -117,28 +141,4 @@ postsRouter.post("/:id/retry", async (c) => {
     .where(eq(posts.id, id));
 
   return c.json({ success: true });
-});
-
-// GET /api/posts/calendar?from=ISO&to=ISO — カレンダー用予約投稿一覧
-postsRouter.get("/calendar", async (c) => {
-  const from = c.req.query("from");
-  const to = c.req.query("to");
-
-  const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const toDate = to ? new Date(to) : new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
-
-  const rows = await db.query.scheduledPosts.findMany({
-    where: and(
-      gte(scheduledPosts.scheduledAt, fromDate),
-      lte(scheduledPosts.scheduledAt, toDate),
-    ),
-    with: {
-      post: {
-        with: { account: true },
-      },
-    },
-    orderBy: (sp, { asc }) => [asc(sp.scheduledAt)],
-  });
-
-  return c.json(rows);
 });

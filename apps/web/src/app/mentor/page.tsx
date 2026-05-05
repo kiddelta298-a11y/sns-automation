@@ -4,9 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles, Send, Loader2, User, Bot,
   Pencil, Lightbulb, ClipboardCheck, Rocket, Stethoscope,
-  RotateCcw,
+  RotateCcw, Brain,
 } from "lucide-react";
 import { postMentorChat, type MentorMessage, type MentorScenario } from "@/lib/api";
+import { XAlgorithmContent } from "../x-algorithm/page";
 
 // ─── シナリオ定義 ─────────────────────────────────────────────
 interface ScenarioTab {
@@ -93,7 +94,7 @@ const EMPTY_HISTORY: HistoryMap = {
   write: [], topic: [], review: [], growth: [], diagnose: [],
 };
 
-export default function MentorPage() {
+function MentorContent() {
   const [activeKey, setActiveKey] = useState<MentorScenario>("write");
   const [histories, setHistories] = useState<HistoryMap>(EMPTY_HISTORY);
   const [input, setInput] = useState("");
@@ -344,6 +345,56 @@ function MessageBubble({ role, content }: { role: "user" | "assistant"; content:
           color: "rgba(240,238,255,0.88)",
         }}>
         {content}
+      </div>
+    </div>
+  );
+}
+
+// ─── トップタブ付きラッパー: Mentor / Algorithm 切替 ───────────────
+type XToolKey = "mentor" | "algorithm";
+
+export default function XToolsPage() {
+  const [tool, setTool] = useState<XToolKey>("mentor");
+  return (
+    <div className="flex h-[calc(100vh-0rem)] flex-col">
+      {/* ── トップタブ ── */}
+      <div className="flex gap-1 border-b px-6 py-3"
+        style={{ borderColor: "rgba(139,92,246,0.12)", background: "rgba(13,10,25,0.6)" }}>
+        <button
+          onClick={() => setTool("mentor")}
+          className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all"
+          style={tool === "mentor" ? {
+            background: "linear-gradient(135deg, rgba(124,58,237,0.6), rgba(168,85,247,0.4))",
+            border: "1px solid rgba(139,92,246,0.5)",
+            color: "#e9d5ff",
+          } : {
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(139,92,246,0.15)",
+            color: "rgba(240,238,255,0.5)",
+          }}
+        >
+          <Sparkles className="h-4 w-4" />
+          X-Mentor
+        </button>
+        <button
+          onClick={() => setTool("algorithm")}
+          className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all"
+          style={tool === "algorithm" ? {
+            background: "linear-gradient(135deg, rgba(124,58,237,0.6), rgba(168,85,247,0.4))",
+            border: "1px solid rgba(139,92,246,0.5)",
+            color: "#e9d5ff",
+          } : {
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(139,92,246,0.15)",
+            color: "rgba(240,238,255,0.5)",
+          }}
+        >
+          <Brain className="h-4 w-4" />
+          Xアルゴリズム
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {tool === "mentor" ? <MentorContent /> : <div className="p-6"><XAlgorithmContent /></div>}
       </div>
     </div>
   );

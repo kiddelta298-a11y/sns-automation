@@ -13,19 +13,28 @@ import { cn } from "@/lib/utils";
 import { PlusCircle, Trash2, PencilLine } from "lucide-react";
 import type { Platform, PostStatus } from "@/types/post";
 
-const statusFilters: { label: string; value: PostStatus | "all" }[] = [
+type StatusFilter = PostStatus | "all" | "processing";
+
+const statusFilters: { label: string; value: StatusFilter }[] = [
   { label: "すべて", value: "all" },
-  { label: "投稿済み", value: "posted" },
   { label: "予約済み", value: "scheduled" },
-  { label: "下書き", value: "draft" },
+  { label: "実行中", value: "processing" },
+  { label: "投稿済み", value: "posted" },
   { label: "失敗", value: "failed" },
+  { label: "下書き", value: "draft" },
 ];
+
+function matchesStatus(filter: StatusFilter, status: string): boolean {
+  if (filter === "all") return true;
+  if (filter === "processing") return status === "processing" || status === "posting";
+  return status === filter;
+}
 
 const EDITABLE_STATUSES: PostStatus[] = ["draft", "scheduled"];
 
 export default function PostsPage() {
   const router = useRouter();
-  const [filter, setFilter] = useState<PostStatus | "all">("all");
+  const [filter, setFilter] = useState<StatusFilter>("all");
   const [allPosts, setAllPosts] = useState<ApiPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -53,8 +62,7 @@ export default function PostsPage() {
     }
   };
 
-  const posts =
-    filter === "all" ? allPosts : allPosts.filter((p) => p.status === filter);
+  const posts = allPosts.filter((p) => matchesStatus(filter, p.status));
 
   return (
     <div>

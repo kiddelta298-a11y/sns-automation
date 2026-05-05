@@ -22,6 +22,11 @@ import { keywordSetsRouter } from "./routes/keyword-sets.js";
 import { researchRouter } from "./routes/research.js";
 import { accountGroupsRouter } from "./routes/account-groups.js";
 import { mentorRouter } from "./routes/mentor.js";
+import { postHistoryRouter } from "./routes/post-history.js";
+import { scheduledPostsRouter } from "./routes/scheduled-posts.js";
+import { instagramStoryRouter } from "./routes/instagram-story.js";
+import { instagramPostsRouter } from "./routes/instagram-posts.js";
+import { scraperEngineRouter } from "./routes/scraper-engine.js";
 import { handleError } from "./lib/errors.js";
 
 const app = new Hono();
@@ -44,6 +49,7 @@ app.route("/api/analytics", analyticsRouter);
 app.route("/api/industries", industriesRouter);
 app.route("/api/trends", trendsRouter);
 app.route("/api/settings", settingsRouter);
+app.route("/api/scraper-engine", scraperEngineRouter);
 
 // Redirector (short URL)
 app.route("/r", redirectorRouter);
@@ -63,17 +69,39 @@ app.route("/api/account-groups", accountGroupsRouter);
 // X Mentor (x-mastery-mentor skill)
 app.route("/api/mentor", mentorRouter);
 
+// Post history & scheduled posts status
+app.route("/api", postHistoryRouter);
+
+// Scheduled posts live / stream / detail
+app.route("/api/scheduled-posts", scheduledPostsRouter);
+
+// Instagram story posting
+app.route("/api/instagram/story", instagramStoryRouter);
+
+// Instagram feed/story unified posting (folder-driven)
+app.route("/api/instagram/posts", instagramPostsRouter);
+
 // Uploads API
 app.route("/api/uploads", uploadsRouter);
 
 // Static file serving for uploads
 app.get("/uploads/:filename", async (c) => {
   const filename = c.req.param("filename");
-  // Prevent path traversal
   if (filename.includes("..") || filename.includes("/")) {
     return c.json({ error: "Invalid filename" }, 400);
   }
   const response = await serveUpload(filename);
+  if (!response) return c.json({ error: "Not found" }, 404);
+  return response;
+});
+
+// 投稿スクリーンショット配信（サブディレクトリ）
+app.get("/uploads/post-screenshots/:filename", async (c) => {
+  const filename = c.req.param("filename");
+  if (filename.includes("..") || filename.includes("/")) {
+    return c.json({ error: "Invalid filename" }, 400);
+  }
+  const response = await serveUpload(`post-screenshots/${filename}`);
   if (!response) return c.json({ error: "Not found" }, 404);
   return response;
 });

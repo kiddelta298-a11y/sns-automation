@@ -4,7 +4,12 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/posts/status-badge";
 import { PlatformIcon } from "@/components/posts/platform-icon";
-import { getPostAnalytics } from "@/lib/api";
+import { StageBadge } from "@/components/posts/stage-badge";
+import {
+  getPostAnalytics,
+  getScheduledPostByPostId,
+  type ScheduledPostDetail,
+} from "@/lib/api";
 import { formatDate, formatNumber } from "@/lib/utils";
 import type { Platform, PostStatus } from "@/types/post";
 import {
@@ -16,7 +21,25 @@ import {
   MousePointerClick,
   UserCheck,
   PencilLine,
+  ExternalLink,
+  Clock,
+  Play,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
+
+function buildPlatformPostUrl(platform: string, platformPostId: string): string | null {
+  switch (platform) {
+    case "threads":
+      return `https://www.threads.net/p/${encodeURIComponent(platformPostId)}`;
+    case "x":
+      return `https://x.com/i/status/${encodeURIComponent(platformPostId)}`;
+    case "instagram":
+      return `https://www.instagram.com/p/${encodeURIComponent(platformPostId)}`;
+    default:
+      return null;
+  }
+}
 
 const EDITABLE_STATUSES: PostStatus[] = ["draft", "scheduled"];
 
@@ -46,7 +69,10 @@ export default async function PostDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const data = await getPostAnalytics(id).catch(() => null);
+  const [data, scheduled] = await Promise.all([
+    getPostAnalytics(id).catch(() => null),
+    getScheduledPostByPostId(id).catch<ScheduledPostDetail | null>(() => null),
+  ]);
 
   if (!data) {
     notFound();
@@ -55,6 +81,8 @@ export default async function PostDetailPage({
   const post = data.post;
   const totalClicks = data.totalClicks;
   const metrics = data.latestMetrics;
+  const platformPostUrl =
+    post.platformPostId && buildPlatformPostUrl(post.platform, post.platformPostId);
 
   return (
     <div>
@@ -103,9 +131,57 @@ export default async function PostDetailPage({
               </p>
             </div>
           )}
-          <div className="mt-4 flex gap-6 border-t border-border pt-4 text-xs text-muted-foreground">
+
+          {/* 添付画像（あれば） */}
+          {scheduled?.post.attachments && scheduled.post.attachments.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs text-muted-foreground">添付画像</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {scheduled.post.attachments.map((a, i) => (
+                  <div
+                    key={`${a.url}-${i}`}
+                    className="overflow-hidden rounded-md border border-border"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={a.url}
+                      alt={`添付${i + 1}`}
+                      className="block h-32 w-full object-cover"
+                      loading="lazy"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* プラットフォーム投稿リンク */}
+          {post.platformPostId && (
+            <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground">プラットフォーム投稿ID</p>
+              <div className="mt-1 flex items-center gap-2">
+                <code className="text-xs text-foreground">{post.platformPostId}</code>
+                {platformPostUrl && (
+                  <a
+                    href={platformPostUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    投稿を開く
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap gap-6 border-t border-border pt-4 text-xs text-muted-foreground">
             <span>作成: {formatDate(post.createdAt)}</span>
             {post.postedAt && <span>投稿: {formatDate(post.postedAt)}</span>}
+            {post.platform && (
+              <span>媒体: {post.platform}</span>
+            )}
           </div>
         </Card>
 
@@ -159,6 +235,127 @@ export default async function PostDetailPage({
           </Card>
         </div>
       </div>
+
+      {/* 実行タイムライン */}
+      {scheduled && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              実行タイムライン
+              {scheduled.stage && <StageBadge stage={scheduled.stage} />}
+            </CardTitle>
+          </CardHeader>
+
+          <ol className="relative ml-2 border-l border-border pl-6">
+            <TimelineItem
+              icon={Clock}
+              title="予約時刻"
+              time={scheduled.scheduledAt}
+              accent="muted"
+            />
+            <TimelineItem
+              icon={Play}
+              title="実行開始"
+              time={scheduled.startedAt}
+              accent={scheduled.startedAt ? "primary" : "muted"}
+            />
+            <TimelineItem
+              icon={
+                scheduled.status === "failed" ? AlertCircle : CheckCircle2
+              }
+              title={scheduled.status === "failed" ? "失敗" : "完了"}
+              time={scheduled.completedAt}
+              accent={
+                scheduled.status === "failed"
+                  ? "destructive"
+                  : scheduled.completedAt
+                    ? "success"
+                    : "muted"
+              }
+            />
+          </ol>
+
+          {scheduled.errorMessage && (
+            <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3">
+              <p className="text-xs font-semibold text-destructive">
+                エラーメッセージ
+                {scheduled.retryCount != null && scheduled.retryCount > 0 && (
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    (リトライ{scheduled.retryCount}回)
+                  </span>
+                )}
+              </p>
+              <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive">
+                {scheduled.errorMessage}
+              </pre>
+            </div>
+          )}
+
+          {scheduled.screenshots && scheduled.screenshots.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-foreground">実行時スクリーンショット</p>
+              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {scheduled.screenshots.map((s, i) => (
+                  <a
+                    key={`${s.path}-${i}`}
+                    href={s.path}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group block overflow-hidden rounded-md border border-border"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={s.path}
+                      alt={`${s.stage} スクリーンショット`}
+                      className="block h-32 w-full object-cover transition-transform group-hover:scale-105"
+                      loading="lazy"
+                    />
+                    <div className="flex items-center justify-between gap-1 px-2 py-1.5 text-[10px] text-muted-foreground">
+                      <span className="font-mono">{s.stage}</span>
+                      <span>{formatDate(s.capturedAt)}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
+  );
+}
+
+function TimelineItem({
+  icon: Icon,
+  title,
+  time,
+  accent,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  time: string | null;
+  accent: "muted" | "primary" | "success" | "destructive";
+}) {
+  const accentClass =
+    accent === "destructive"
+      ? "bg-destructive text-destructive-foreground"
+      : accent === "success"
+        ? "bg-green-500 text-white"
+        : accent === "primary"
+          ? "bg-primary text-primary-foreground"
+          : "bg-muted text-muted-foreground";
+
+  return (
+    <li className="relative pb-5 last:pb-0">
+      <span
+        className={`absolute -left-[37px] flex h-6 w-6 items-center justify-center rounded-full ${accentClass}`}
+      >
+        <Icon className="h-3 w-3" />
+      </span>
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      <p className="text-xs text-muted-foreground">
+        {time ? formatDate(time) : "未実行"}
+      </p>
+    </li>
   );
 }

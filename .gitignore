@@ -11,3 +11,17 @@ dist/
 apps/api/.env
 apps/worker/.env
 .vercel
+
+# Build artifacts
+*.tsbuildinfo
+
+# Worker runtime data (debug screenshots, probes, uploaded media, browser sessions)
+apps/worker/data/screenshots/
+apps/worker/data/probe/
+apps/worker/data/instagram-uploads/
+apps/worker/data/sessions/
+apps/data/uploads/
+uploads/
+
+# Worker debug probe scripts (one-off investigation files)
+apps/worker/probe-*.mjs

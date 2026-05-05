@@ -261,7 +261,7 @@ function ExpandableCard({
 }
 
 // ─── メインページ ───────────────────────────────────────────
-export default function XAlgorithmPage() {
+export function XAlgorithmContent() {
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
 
   return (
@@ -642,4 +642,8 @@ function TipsTab() {
       </div>
     </div>
   );
+}
+
+export default function XAlgorithmPage() {
+  return <XAlgorithmContent />;
 }
