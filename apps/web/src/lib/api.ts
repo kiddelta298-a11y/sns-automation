@@ -1590,3 +1590,135 @@ export function getPostMetricsHistory(postId: string) {
     `/api/research/performance/post/${postId}/history`,
   );
 }
+
+// ─── Affiliate PDCA ──────────────────────────────────────────
+
+export interface ApiAffiliateLink {
+  id: string;
+  case_name: string;
+  asp: string;
+  tracking_url: string;
+  short_slug: string;
+  genre: string | null;
+  unit_payout: number | null;
+  status: string;
+  memo: string | null;
+  created_at: string;
+  updated_at: string;
+  total_clicks?: number;
+  total_cv?: number;
+  total_revenue?: number;
+}
+
+export interface ApiStoryPost {
+  id: string;
+  posted_at: string;
+  account_id: string | null;
+  link_id: string | null;
+  source_buzz_id: string | null;
+  image_path: string | null;
+  caption: string | null;
+  schedule_id: string | null;
+  note: string | null;
+  expired_at: string | null;
+  created_at: string;
+  account_username?: string | null;
+  link_case_name?: string | null;
+  link_short_slug?: string | null;
+  link_asp?: string | null;
+  click_count_via_link?: number;
+}
+
+export interface ApiAffiliateDashboard {
+  linkRoas: Array<{
+    id: string;
+    case_name: string;
+    asp: string;
+    unit_payout: number | null;
+    clicks: number;
+    cv: number;
+    revenue: number;
+    cvr: number;
+  }>;
+  accountCvr: Array<{
+    id: string;
+    username: string;
+    platform: string;
+    story_count: number;
+    clicks: number;
+    cv: number;
+  }>;
+  heatmap: Array<{ dow: number; hour: number; clicks: number }>;
+}
+
+export function getAffiliateLinks() {
+  return apiFetch<ApiAffiliateLink[]>("/api/affiliate/links");
+}
+
+export function createAffiliateLink(data: {
+  caseName: string;
+  asp: string;
+  trackingUrl: string;
+  shortSlug?: string;
+  genre?: string;
+  unitPayout?: number;
+  memo?: string;
+}) {
+  return apiFetch<ApiAffiliateLink>("/api/affiliate/links", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateAffiliateLink(
+  id: string,
+  data: Partial<{
+    caseName: string;
+    asp: string;
+    trackingUrl: string;
+    genre: string;
+    unitPayout: number;
+    status: "active" | "paused" | "dead";
+    memo: string;
+  }>,
+) {
+  return apiFetch<ApiAffiliateLink>(`/api/affiliate/links/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteAffiliateLink(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/affiliate/links/${id}`, { method: "DELETE" });
+}
+
+export function getStoryPosts(limit = 100) {
+  return apiFetch<ApiStoryPost[]>(`/api/affiliate/posts?limit=${limit}`);
+}
+
+export function createStoryPost(data: {
+  linkId?: string;
+  accountId?: string;
+  caption?: string;
+  imagePath?: string;
+  sourceBuzzId?: string;
+  note?: string;
+  postedAt?: string;
+}) {
+  return apiFetch<ApiStoryPost>("/api/affiliate/posts", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteStoryPost(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/affiliate/posts/${id}`, { method: "DELETE" });
+}
+
+export function getAffiliateDashboard(from?: string, to?: string) {
+  const qs = new URLSearchParams();
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  const q = qs.toString();
+  return apiFetch<ApiAffiliateDashboard>(`/api/affiliate/dashboard${q ? `?${q}` : ""}`);
+}

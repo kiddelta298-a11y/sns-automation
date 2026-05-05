@@ -5,8 +5,9 @@ services:
     runtime: node
     rootDir: apps/api
     buildCommand: npm install && npm run build
-    startCommand: node dist/index.js
+    startCommand: npm run start:prod
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
@@ -25,6 +26,7 @@ services:
     runtime: docker
     rootDir: .
     dockerfilePath: apps/worker/Dockerfile
+    autoDeploy: true
     disk:
       name: worker-sessions
       mountPath: /app/apps/worker/data/sessions

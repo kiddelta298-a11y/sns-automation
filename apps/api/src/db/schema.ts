@@ -935,3 +935,128 @@ export const accountGroupMembersRelations = relations(accountGroupMembers, ({ on
     references: [accounts.id],
   }),
 }));
+
+// ============================================================
+// affiliate_links（アフィリエイト案件マスタ）
+// ============================================================
+export const affiliateLinks = pgTable(
+  "affiliate_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    caseName: text("case_name").notNull(),
+    asp: text("asp").notNull(),
+    trackingUrl: text("tracking_url").notNull(),
+    shortSlug: text("short_slug").notNull(),
+    genre: text("genre"),
+    unitPayout: integer("unit_payout"),
+    status: text("status").default("active").notNull(),
+    memo: text("memo"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_affiliate_links_short_slug").on(t.shortSlug),
+    index("idx_affiliate_links_status").on(t.status),
+  ],
+);
+
+// ============================================================
+// story_posts（ストーリー投稿実績ログ）
+// ============================================================
+export const storyPosts = pgTable(
+  "story_posts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    postedAt: timestamp("posted_at").notNull(),
+    accountId: uuid("account_id").references(() => accounts.id),
+    linkId: uuid("link_id").references(() => affiliateLinks.id),
+    sourceBuzzId: text("source_buzz_id"),
+    imagePath: text("image_path"),
+    caption: text("caption"),
+    scheduleId: uuid("schedule_id"),
+    note: text("note"),
+    expiredAt: timestamp("expired_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_story_posts_posted_at").on(t.postedAt),
+    index("idx_story_posts_link_id").on(t.linkId),
+  ],
+);
+
+export const storyPostsRelations = relations(storyPosts, ({ one }) => ({
+  link: one(affiliateLinks, {
+    fields: [storyPosts.linkId],
+    references: [affiliateLinks.id],
+  }),
+  account: one(accounts, {
+    fields: [storyPosts.accountId],
+    references: [accounts.id],
+  }),
+}));
+
+// ============================================================
+// link_clicks（短縮URLクリックログ）
+// ============================================================
+export const linkClicks = pgTable(
+  "link_clicks",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    shortSlug: text("short_slug").notNull(),
+    clickedAt: timestamp("clicked_at").defaultNow().notNull(),
+    ipHash: text("ip_hash"),
+    userAgent: text("user_agent"),
+    referer: text("referer"),
+    utmSource: text("utm_source"),
+    storyPostId: uuid("story_post_id").references(() => storyPosts.id),
+  },
+  (t) => [
+    index("idx_link_clicks_short_slug").on(t.shortSlug),
+    index("idx_link_clicks_clicked_at").on(t.clickedAt),
+    index("idx_link_clicks_story_post_id").on(t.storyPostId),
+  ],
+);
+
+// ============================================================
+// asp_reports（ASPレポート取込）
+// ============================================================
+export const aspReports = pgTable(
+  "asp_reports",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    reportDate: date("report_date").notNull(),
+    asp: text("asp").notNull(),
+    linkId: uuid("link_id").references(() => affiliateLinks.id),
+    clicks: integer("clicks").default(0).notNull(),
+    cv: integer("cv").default(0).notNull(),
+    revenue: integer("revenue").default(0).notNull(),
+    rawRow: jsonb("raw_row"),
+    importedAt: timestamp("imported_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_asp_reports_unique").on(t.reportDate, t.asp, t.linkId),
+    index("idx_asp_reports_link_id").on(t.linkId),
+  ],
+);
+
+// ============================================================
+// asp_name_mapping（ASP案件名マッピング辞書）
+// ============================================================
+export const aspNameMapping = pgTable(
+  "asp_name_mapping",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    asp: text("asp").notNull(),
+    rawName: text("raw_name").notNull(),
+    linkId: uuid("link_id").references(() => affiliateLinks.id),
+  },
+  (t) => [
+    uniqueIndex("idx_asp_name_mapping_unique").on(t.asp, t.rawName),
+  ],
+);
+
+export const affiliateLinksRelations = relations(affiliateLinks, ({ many }) => ({
+  storyPosts: many(storyPosts),
+  aspReports: many(aspReports),
+  nameMappings: many(aspNameMapping),
+}));

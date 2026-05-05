@@ -27,6 +27,7 @@ import { scheduledPostsRouter } from "./routes/scheduled-posts.js";
 import { instagramStoryRouter } from "./routes/instagram-story.js";
 import { instagramPostsRouter } from "./routes/instagram-posts.js";
 import { scraperEngineRouter } from "./routes/scraper-engine.js";
+import { affiliateRouter } from "./routes/affiliate.js";
 import { handleError } from "./lib/errors.js";
 
 const app = new Hono();
@@ -50,6 +51,9 @@ app.route("/api/industries", industriesRouter);
 app.route("/api/trends", trendsRouter);
 app.route("/api/settings", settingsRouter);
 app.route("/api/scraper-engine", scraperEngineRouter);
+
+// Affiliate PDCA Phase 1 (links + story posts + dashboard)
+app.route("/api/affiliate", affiliateRouter);
 
 // Redirector (short URL)
 app.route("/r", redirectorRouter);
