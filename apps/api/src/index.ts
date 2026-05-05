@@ -79,8 +79,9 @@ app.route("/api", postHistoryRouter);
 // Scheduled posts live / stream / detail
 app.route("/api/scheduled-posts", scheduledPostsRouter);
 
-// Instagram story posting
+// Instagram story posting (single + plural alias for /uploads list)
 app.route("/api/instagram/story", instagramStoryRouter);
+app.route("/api/instagram/stories", instagramStoryRouter);
 
 // Instagram feed/story unified posting (folder-driven)
 app.route("/api/instagram/posts", instagramPostsRouter);

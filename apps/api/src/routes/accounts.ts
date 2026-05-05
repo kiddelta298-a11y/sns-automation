@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db/client.js";
 import { accounts, posts, postMetrics } from "../db/schema.js";
 import {
@@ -11,6 +12,10 @@ import {
   uploadSessionSchema,
   paginationSchema,
 } from "../lib/validators.js";
+
+const accountListQuerySchema = paginationSchema.extend({
+  platform: z.string().min(1).optional(),
+});
 import { notFound } from "../lib/errors.js";
 
 // ---------------------------------------------------------------
@@ -80,12 +85,13 @@ accountsRouter.post("/", zValidator("json", createAccountSchema), async (c) => {
   return c.json(sanitizeAccount(account), 201);
 });
 
-// GET /api/accounts — アカウント一覧
-accountsRouter.get("/", zValidator("query", paginationSchema), async (c) => {
-  const { limit, offset } = c.req.valid("query");
+// GET /api/accounts — アカウント一覧（platform フィルタ任意）
+accountsRouter.get("/", zValidator("query", accountListQuerySchema), async (c) => {
+  const { limit, offset, platform } = c.req.valid("query");
   const results = await db.query.accounts.findMany({
     limit,
     offset,
+    where: platform ? eq(accounts.platform, platform) : undefined,
     orderBy: (accounts, { desc }) => [desc(accounts.createdAt)],
   });
   return c.json(results.map(sanitizeAccount));
