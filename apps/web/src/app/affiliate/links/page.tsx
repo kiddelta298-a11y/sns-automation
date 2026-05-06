@@ -386,7 +386,131 @@ export default function AffiliateLinksPage() {
             </p>
           </div>
         ) : (
-          <div className="rounded-2xl overflow-hidden" style={GLASS.card}>
+          <>
+          {/* ── モバイル: カード表示 ───────────────────────────────── */}
+          <div className="md:hidden space-y-3">
+            {links.map((link) => {
+              const stColor = STATUS_COLORS[link.status] ?? STATUS_COLORS.active;
+              const acc = link.account_id ? accounts.find((a) => a.id === link.account_id) : null;
+              const shortUrl = shortRedirectUrl(link.short_slug);
+              return (
+                <div key={link.id} className="rounded-2xl p-4 space-y-3" style={GLASS.card}>
+                  {/* 1段目: 案件名 + アカウント + 状態 */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm break-words" style={{ color: "rgba(240,238,255,0.92)" }}>
+                        {link.case_name}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {acc ? (
+                          <span className="text-[11px] rounded px-1.5 py-0.5"
+                            style={{ background: "rgba(139,92,246,0.18)", color: "#c4b5fd" }}>
+                            @{acc.username}
+                          </span>
+                        ) : (
+                          <span className="text-[11px]" style={{ color: "rgba(240,238,255,0.4)" }}>
+                            未割当（共有）
+                          </span>
+                        )}
+                        <span className="text-[11px]" style={{ color: "rgba(240,238,255,0.5)" }}>
+                          · {link.asp}
+                        </span>
+                        {link.genre && (
+                          <span className="text-[11px]" style={{ color: "rgba(240,238,255,0.4)" }}>
+                            · {link.genre}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <select value={link.status}
+                      onChange={(e) => handleStatusToggle(link, e.target.value as "active" | "paused" | "dead")}
+                      className="rounded-md px-2 py-1 text-xs shrink-0"
+                      style={{ background: stColor.bg, color: stColor.color, border: "1px solid transparent" }}>
+                      <option value="active">稼働中</option>
+                      <option value="paused">停止中</option>
+                      <option value="dead">終了</option>
+                    </select>
+                  </div>
+
+                  {/* 2段目: 短縮URL + 大きなコピーボタン */}
+                  <button
+                    onClick={() => handleCopy(link.short_slug)}
+                    className="w-full flex items-center gap-2 rounded-xl px-3 py-3 text-left transition-all active:scale-[0.98]"
+                    style={{
+                      background: copiedSlug === link.short_slug ? "rgba(34,197,94,0.15)" : "rgba(139,92,246,0.12)",
+                      border: copiedSlug === link.short_slug ? "1px solid rgba(34,197,94,0.4)" : "1px solid rgba(139,92,246,0.3)",
+                    }}
+                  >
+                    {copiedSlug === link.short_slug ? (
+                      <Check className="h-5 w-5 shrink-0" style={{ color: "#4ade80" }} />
+                    ) : (
+                      <Copy className="h-5 w-5 shrink-0" style={{ color: "#c4b5fd" }} />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-medium" style={{ color: copiedSlug === link.short_slug ? "#4ade80" : "rgba(196,181,253,0.7)" }}>
+                        {copiedSlug === link.short_slug ? "コピーしました ✓" : "タップで短縮URLをコピー"}
+                      </div>
+                      <code className="text-xs block truncate" style={{ color: copiedSlug === link.short_slug ? "#4ade80" : "#c4b5fd" }}>
+                        {shortUrl}
+                      </code>
+                    </div>
+                  </button>
+
+                  {/* 3段目: 数値KPIグリッド */}
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div className="rounded-lg py-2" style={GLASS.inner}>
+                      <div className="text-[10px]" style={{ color: "rgba(240,238,255,0.5)" }}>単価</div>
+                      <div className="text-sm font-semibold" style={{ color: "rgba(240,238,255,0.85)" }}>
+                        {link.unit_payout != null ? `¥${link.unit_payout.toLocaleString()}` : "—"}
+                      </div>
+                    </div>
+                    <div className="rounded-lg py-2" style={GLASS.inner}>
+                      <div className="text-[10px]" style={{ color: "rgba(240,238,255,0.5)" }}>クリック</div>
+                      <div className="text-sm font-semibold" style={{ color: "#60a5fa" }}>
+                        {(link.total_clicks ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="rounded-lg py-2" style={GLASS.inner}>
+                      <div className="text-[10px]" style={{ color: "rgba(240,238,255,0.5)" }}>CV</div>
+                      <div className="text-sm font-semibold" style={{ color: "#4ade80" }}>
+                        {(link.total_cv ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="rounded-lg py-2" style={GLASS.inner}>
+                      <div className="text-[10px]" style={{ color: "rgba(240,238,255,0.5)" }}>売上</div>
+                      <div className="text-sm font-semibold" style={{ color: "#fbbf24" }}>
+                        ¥{(link.total_revenue ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4段目: 操作ボタン */}
+                  <div className="flex items-center gap-2">
+                    <a href={link.tracking_url} target="_blank" rel="noreferrer"
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs"
+                      style={GLASS.btnGhost} title="本URLを開く">
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      本URL
+                    </a>
+                    <button onClick={() => handleEdit(link)}
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs"
+                      style={GLASS.btnGhost}>
+                      <Edit3 className="h-3.5 w-3.5" />
+                      編集
+                    </button>
+                    <button onClick={() => handleDelete(link.id)}
+                      className="rounded-lg px-3 py-2 text-xs"
+                      style={{ ...GLASS.btnGhost, color: "#fb7185" }} title="削除">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── デスクトップ: テーブル表示 ─────────────────────────── */}
+          <div className="hidden md:block rounded-2xl overflow-hidden" style={GLASS.card}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -430,9 +554,18 @@ export default function AffiliateLinksPage() {
                             <code className="text-xs rounded px-2 py-1" style={{ background: "rgba(139,92,246,0.12)", color: "#c4b5fd" }}>
                               /r/{link.short_slug}
                             </code>
-                            <button onClick={() => handleCopy(link.short_slug)} className="text-xs rounded p-1.5"
-                              style={GLASS.btnGhost} title="短縮URLをコピー">
-                              {copiedSlug === link.short_slug ? <Check className="h-3 w-3" style={{ color: "#4ade80" }} /> : <Copy className="h-3 w-3" />}
+                            <button
+                              onClick={() => handleCopy(link.short_slug)}
+                              className="flex items-center gap-1 text-xs rounded px-2 py-1.5 transition-all"
+                              style={{
+                                background: copiedSlug === link.short_slug ? "rgba(34,197,94,0.15)" : "rgba(139,92,246,0.12)",
+                                border: copiedSlug === link.short_slug ? "1px solid rgba(34,197,94,0.4)" : "1px solid rgba(139,92,246,0.3)",
+                                color: copiedSlug === link.short_slug ? "#4ade80" : "#c4b5fd",
+                              }}
+                              title="短縮URLをコピー"
+                            >
+                              {copiedSlug === link.short_slug ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                              {copiedSlug === link.short_slug ? "コピー済" : "コピー"}
                             </button>
                             <a href={link.tracking_url} target="_blank" rel="noreferrer"
                               className="text-xs rounded p-1.5" style={GLASS.btnGhost} title="本URLを開く">
@@ -481,6 +614,7 @@ export default function AffiliateLinksPage() {
               </table>
             </div>
           </div>
+          </>
         )}
       </div>
 
