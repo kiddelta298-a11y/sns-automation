@@ -226,10 +226,14 @@ export function createThreadsPostWorker(): Worker<
     {
       connection,
       concurrency: 1, // Threads の操作は 1 並行に制限
-      limiter: {
-        max: 5,
-        duration: 60_000 * 60, // 1時間あたり最大 5 投稿
-      },
+      // Render Free Plan の OOM kill / SIGTERM による無限再キューを防ぐ
+      maxStalledCount: 0,
+      // Browser 操作で時間がかかる場合の lock TTL を延長
+      lockDuration: 5 * 60 * 1000,
+      // ※ 過去にあった limiter: { max: 5, duration: 1h } は廃止。
+      // BullMQ の limiter キー (bull:post-to-threads:limiter) が
+      // 残存してジョブが永遠に処理されない事故が起きたため。
+      // Threads 側のレート対策は workerコード内 humanDelay で実施する。
     },
   );
 

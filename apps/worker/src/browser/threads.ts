@@ -275,35 +275,65 @@ export class ThreadsBrowser {
 
           console.log("[threads] Starting post...");
 
-          await this.page.goto(`${BASE_URL}/`, {
-            waitUntil: "domcontentloaded",
-            timeout: 15_000,
-          });
-          await humanDelay(2000, 3500);
+          // ── 投稿モーダルの開き方は3段階フォールバック ──
+          //   1) /intent/post を直接開く（最も信頼できる: モーダルが直リンクで出る）
+          //   2) ホーム + 「スレッドを始める / 作成」ボタン押下
+          //   3) キーボードショートカット (p)
+          let textareaHandle: Awaited<ReturnType<typeof this.page.waitForSelector>> = null;
 
-          // 新規投稿ボタン（フォールバック付き）
-          await this.clickNewPostButton();
-          await humanDelay(1500, 3000);
+          // 戦略1: /intent/post で直接モーダル展開
+          try {
+            await this.page.goto(`${BASE_URL}/intent/post`, {
+              waitUntil: "domcontentloaded",
+              timeout: 15_000,
+            });
+            await humanDelay(2000, 3500);
+            textareaHandle = await this.page.waitForSelector(
+              [
+                '[role="dialog"] [contenteditable="true"]',
+                '[role="dialog"] [data-lexical-editor="true"]',
+                '[data-lexical-editor="true"]',
+                '[contenteditable="true"][role="textbox"]',
+                'div[contenteditable="true"][aria-label]',
+                'div[contenteditable="true"]',
+                'textarea',
+              ].join(", "),
+              { timeout: 12_000 },
+            ).catch(() => null);
+            if (textareaHandle) console.log("[threads] Modal opened via /intent/post");
+          } catch (e) {
+            console.warn(`[threads] /intent/post failed: ${e instanceof Error ? e.message : e}`);
+          }
 
-          // テキスト入力エリア待機。Threads UI は contenteditable で実装されており
-          // dialog 内に出ることが多いが、モバイル/旧 UI ではページ全体に出るケースもある。
-          // セレクタを段階的に拡張し、最初に見つかった要素にフォーカスする。
-          let textareaHandle = await this.page.waitForSelector(
-            [
-              '[role="dialog"] [contenteditable="true"]',
-              '[role="dialog"] [data-lexical-editor="true"]',
-              '[data-lexical-editor="true"]',
-              '[contenteditable="true"][role="textbox"]',
-              'div[contenteditable="true"][aria-label]',
-              'div[contenteditable="true"]',
-              'textarea',
-            ].join(", "),
-            { timeout: 15_000 },
-          ).catch(() => null);
-
-          // フォールバック: ページキー操作で投稿モーダルを再オープン
+          // 戦略2: ホーム + 「スレッドを始める / 作成」ボタン
           if (!textareaHandle) {
-            console.warn("[threads] Textarea not found, retrying with keyboard shortcut");
+            console.warn("[threads] Falling back to home + new-post-button");
+            await this.page.goto(`${BASE_URL}/`, {
+              waitUntil: "domcontentloaded",
+              timeout: 15_000,
+            }).catch(() => {});
+            await humanDelay(2000, 3500);
+            await this.clickNewPostButton().catch((e) =>
+              console.warn(`[threads] clickNewPostButton failed: ${e instanceof Error ? e.message : e}`),
+            );
+            await humanDelay(1500, 3000);
+            textareaHandle = await this.page.waitForSelector(
+              [
+                '[role="dialog"] [contenteditable="true"]',
+                '[role="dialog"] [data-lexical-editor="true"]',
+                '[data-lexical-editor="true"]',
+                '[contenteditable="true"][role="textbox"]',
+                'div[contenteditable="true"][aria-label]',
+                'div[contenteditable="true"]',
+                'textarea',
+              ].join(", "),
+              { timeout: 12_000 },
+            ).catch(() => null);
+          }
+
+          // 戦略3: キーボードショートカット (p)
+          if (!textareaHandle) {
+            console.warn("[threads] Falling back to keyboard shortcut 'p'");
             await this.page.keyboard.press("p").catch(() => {});
             await humanDelay(1500, 2500);
             textareaHandle = await this.page.waitForSelector(
@@ -313,8 +343,14 @@ export class ThreadsBrowser {
           }
 
           if (!textareaHandle) {
-            await this.takeScreenshot(`error-no-textarea-${opts.scheduledId ?? Date.now()}`);
-            throw new Error("Post textarea not found after fallback");
+            // 失敗時は実際の画面をスクショして UI 検証材料にする
+            const ssPath = await this.takeScreenshot(
+              `error-no-textarea-${opts.scheduledId ?? Date.now()}`,
+            );
+            const url = this.page.url();
+            throw new Error(
+              `Post textarea not found after all fallbacks (url=${url}, screenshot=${ssPath ?? "n/a"})`,
+            );
           }
 
           // フォーカスして文字を入力（contenteditable は click → keyboard.type が安定）
