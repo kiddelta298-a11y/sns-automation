@@ -1039,7 +1039,9 @@ function GroupCard({ group, onDeleted, onUpdated }: {
                   disabled={monitoring || accounts.length === 0 || !!monitorJobId}
                   className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-all disabled:opacity-50"
                   style={GLASS.btnPrimary}
-                  title="詳細ページを1件ずつ訪問してエンゲージメント値を正確に取得（人間的速度で抽出）"
+                  title={accounts.length === 0
+                    ? "参考アカウントを追加してから収集できます"
+                    : "詳細ページを1件ずつ訪問してエンゲージメント値を正確に取得（人間的速度で抽出）"}
                 >
                   {monitoring || monitorJobId ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   {monitorJobId ? "抽出中..." : "投稿を収集"}
@@ -1067,7 +1069,7 @@ function GroupCard({ group, onDeleted, onUpdated }: {
                     disabled={analyzing || isRunning || accounts.length === 0}
                     className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all disabled:opacity-50"
                     style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(139,92,246,0.18)", color: "rgba(240,238,255,0.6)" }}
-                    title="バズ要因をAIで分析"
+                    title={accounts.length === 0 ? "参考アカウントを追加してから分析できます" : "バズ要因をAIで分析"}
                   >
                     {analyzing || isRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
                     {isRunning ? "分析中" : "分析する"}
