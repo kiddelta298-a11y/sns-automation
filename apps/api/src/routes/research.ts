@@ -1846,6 +1846,7 @@ researchRouter.post("/genres/:id/auto-post", async (c) => {
     WHERE account_id IN (${sql.join(targetAccounts.map((a) => sql`${a.id}`), sql`, `)})
       AND metadata->>'source' = 'research_auto_post'
       AND metadata->>'monitored_post_id' IN (${sql.join(monitoredPostIds.map((id) => sql`${id}`), sql`, `)})
+      AND status NOT IN ('failed', 'cancelled')
   `);
   const dupKey = (accountId: string, monitoredPostId: string) => `${accountId}::${monitoredPostId}`;
   const existingSet = new Set(
@@ -2050,7 +2051,8 @@ researchRouter.post("/auto-post-multi", async (c) => {
     }, 400);
   }
 
-  // 重複防止: (accountId, monitored_post_id) が既存ならスキップ
+  // 重複防止: (accountId, monitored_post_id) が既存ならスキップ。
+  // ただし過去に失敗したもの（status='failed'）は再投稿可能にするため除外しない。
   const monitoredPostIds = topPosts.map((p) => p.id);
   const existingDup = await db.execute(sql`
     SELECT account_id, metadata->>'monitored_post_id' AS monitored_post_id
@@ -2058,6 +2060,7 @@ researchRouter.post("/auto-post-multi", async (c) => {
     WHERE account_id IN (${sql.join(targetAccounts.map((a) => sql`${a.id}`), sql`, `)})
       AND metadata->>'source' = 'research_auto_post'
       AND metadata->>'monitored_post_id' IN (${sql.join(monitoredPostIds.map((id) => sql`${id}`), sql`, `)})
+      AND status NOT IN ('failed', 'cancelled')
   `);
   const dupKey = (accountId: string, monitoredPostId: string) => `${accountId}::${monitoredPostId}`;
   const existingSet = new Set(
@@ -2125,6 +2128,22 @@ researchRouter.post("/auto-post-multi", async (c) => {
       });
       postIndex++;
     }
+  }
+
+  // 1件も作成されなかった場合はエラー応答にする（UI側で「ステータス何も出ない」を防ぐ）
+  if (created.length === 0) {
+    return c.json(
+      {
+        error:
+          skipped.length > 0
+            ? `投稿候補 ${skipped.length} 件すべてが既に予約・投稿済みのためスキップされました。別のグループ・別のアカウントを選ぶか、フィルタ条件を変えてください。`
+            : "予約できる投稿がありませんでした。",
+        scheduledCount: 0,
+        skippedCount: skipped.length,
+        skipped,
+      },
+      400,
+    );
   }
 
   return c.json(
