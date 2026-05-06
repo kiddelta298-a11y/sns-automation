@@ -34,7 +34,7 @@ const navItems = [
   { href: "/trends",     label: "トレンド分析",     icon: TrendingUp },
   { href: "/patterns",   label: "勝ちパターン",     icon: Trophy },
   { href: "/keywords",   label: "ワード収集",       icon: Tags },
-  { href: "/threads-analysis", label: "スレッツ投稿収集・自動投稿", icon: Sparkles },
+  { href: "/threads-analysis", label: "Threads投稿収集・自動投稿", icon: Sparkles },
   { href: "/affiliate/links",     label: "アフィリエイト案件",     icon: Link2 },
   { href: "/affiliate/posts",     label: "ストーリー投稿ログ",     icon: ImageIcon },
   { href: "/affiliate/dashboard", label: "アフィリエイト分析",     icon: BarChart3 },

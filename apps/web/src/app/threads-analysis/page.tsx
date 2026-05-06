@@ -1031,16 +1031,18 @@ function GroupCard({ group, onDeleted, onUpdated }: {
                 </div>
               </div>
 
-              {/* アクション */}
+              {/* アクション: 投稿収集（メイン）→ 抽出件数 → サブ操作群（控えめ） */}
               <div className="flex items-center gap-2 flex-wrap">
+                {/* メイン: 投稿収集 */}
                 <button
-                  onClick={handleAnalyze}
-                  disabled={analyzing || isRunning || accounts.length === 0}
-                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
+                  onClick={handleMonitor}
+                  disabled={monitoring || accounts.length === 0 || !!monitorJobId}
+                  className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-all disabled:opacity-50"
                   style={GLASS.btnPrimary}
+                  title="詳細ページを1件ずつ訪問してエンゲージメント値を正確に取得（人間的速度で抽出）"
                 >
-                  {analyzing || isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                  {isRunning ? "分析中..." : "一括分析を開始"}
+                  {monitoring || monitorJobId ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  {monitorJobId ? "抽出中..." : "投稿を収集"}
                 </button>
                 <div className="flex items-center gap-1.5 rounded-xl px-3 py-1" style={GLASS.inner}>
                   <label className="text-[11px] whitespace-nowrap" style={{ color: "rgba(240,238,255,0.55)" }}>
@@ -1058,31 +1060,29 @@ function GroupCard({ group, onDeleted, onUpdated }: {
                     style={GLASS.input}
                   />
                 </div>
-                <button
-                  onClick={handleMonitor}
-                  disabled={monitoring || accounts.length === 0 || !!monitorJobId}
-                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
-                  style={GLASS.btnSecondary}
-                  title="詳細ページを1件ずつ訪問してエンゲージメント値を正確に取得（人間的速度で抽出）"
-                >
-                  {monitoring || monitorJobId ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  {monitorJobId ? "抽出中..." : "投稿を収集"}
-                </button>
-                <Link href={`/threads-analysis/${group.id}/monitor`}
-                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all"
-                  style={{ background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.25)", color: "#fbbf24" }}>
-                  <Activity className="h-4 w-4" />推移グラフ
-                </Link>
-                <Link href={`/threads-analysis/${group.id}/growth`}
-                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all"
-                  style={{ background: "rgba(168,85,247,0.12)", border: "1px solid rgba(168,85,247,0.25)", color: "#c4b5fd" }}>
-                  <TrendingUp className="h-4 w-4" />成長分析
-                </Link>
-                <Link href="/posts/new"
-                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all ml-auto"
-                  style={GLASS.btnGhost}>
-                  <Plus className="h-4 w-4" />新規投稿作成へ
-                </Link>
+                {/* サブ操作（控えめスタイル・右寄せ） */}
+                <div className="flex items-center gap-1.5 ml-auto opacity-80">
+                  <button
+                    onClick={handleAnalyze}
+                    disabled={analyzing || isRunning || accounts.length === 0}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all disabled:opacity-50"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(139,92,246,0.18)", color: "rgba(240,238,255,0.6)" }}
+                    title="バズ要因をAIで分析"
+                  >
+                    {analyzing || isRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    {isRunning ? "分析中" : "分析する"}
+                  </button>
+                  <Link href={`/threads-analysis/${group.id}/monitor`}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-all"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(251,191,36,0.18)", color: "rgba(251,191,36,0.75)" }}>
+                    <Activity className="h-3 w-3" />推移グラフ
+                  </Link>
+                  <Link href={`/threads-analysis/${group.id}/growth`}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-all"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(168,85,247,0.18)", color: "rgba(196,181,253,0.75)" }}>
+                    <TrendingUp className="h-3 w-3" />成長分析
+                  </Link>
+                </div>
               </div>
 
               {/* 抽出ジョブ進捗 */}
@@ -1561,7 +1561,7 @@ export default function ThreadsAnalysisPage() {
   };
 
   const TABS = [
-    { id: "analysis" as const, label: "Threadsアカウント分析" },
+    { id: "analysis" as const, label: "Threads投稿収集" },
     { id: "threads" as const, label: "Threads投稿" },
     { id: "ig" as const, label: "Instagramストーリー投稿" },
   ];
@@ -1598,7 +1598,7 @@ export default function ThreadsAnalysisPage() {
               WebkitTextFillColor: "transparent",
               backgroundClip: "text",
             }}>
-              Threadsアカウント分析
+              Threads投稿収集
             </h1>
             <p className="text-sm mt-1" style={{ color: "rgba(240,238,255,0.55)" }}>
               Threadsアカウントをグループ化して一括分析。バズ投稿抽出 → 共通要因特定 → 自分の投稿へ転用。
@@ -1713,7 +1713,7 @@ export default function ThreadsAnalysisPage() {
                   自動投稿（バズ投稿一括スケジュール）
                 </h2>
                 <p className="text-sm mt-1" style={{ color: "rgba(240,238,255,0.45)" }}>
-                  Threadsアカウント分析タブで作成したグループから、エンゲージメント条件に合うバズ投稿を抽出し、選択アカウントへインプレッション順に順次予約します。
+                  Threads投稿収集タブで作成したグループから、エンゲージメント条件に合うバズ投稿を抽出し、選択アカウントへインプレッション順に順次予約します。
                 </p>
               </div>
 

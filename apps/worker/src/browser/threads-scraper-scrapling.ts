@@ -92,12 +92,16 @@ export class ThreadsScraperScrapling implements IThreadsScraper {
     throw new Error("Scrapling engine: login not supported yet");
   }
 
-  private _runPython(input: PythonInput): Promise<PythonResult> {
+  private _runPython(
+    input: PythonInput,
+    onStderrLine?: (line: string) => void,
+  ): Promise<PythonResult> {
     return new Promise((resolve, reject) => {
       const scriptPath = getScriptPath();
       const proc = spawn(PYTHON_BIN, [scriptPath], { stdio: ["pipe", "pipe", "pipe"] });
 
       const stdoutLines: string[] = [];
+      const stderrLines: string[] = [];
       let timedOut = false;
 
       const timer = setTimeout(() => {
@@ -117,8 +121,15 @@ export class ThreadsScraperScrapling implements IThreadsScraper {
       proc.stderr.on("data", (chunk: string) => {
         for (const line of chunk.split("\n")) {
           const trimmed = line.trim();
+          if (!trimmed) continue;
+          stderrLines.push(trimmed);
           if (trimmed.startsWith("PROGRESS: ")) {
-            this.onProgress(trimmed.slice("PROGRESS: ".length));
+            const msg = trimmed.slice("PROGRESS: ".length);
+            this.onProgress(msg);
+            onStderrLine?.(msg);
+          } else {
+            // Pythonの非progress出力（モジュールimportエラー等）も捕捉
+            onStderrLine?.(trimmed);
           }
         }
       });
@@ -129,7 +140,9 @@ export class ThreadsScraperScrapling implements IThreadsScraper {
 
         const lastLine = stdoutLines[stdoutLines.length - 1];
         if (!lastLine) {
-          reject(new Error(`Scrapling: no output from Python (exit ${code})`));
+          // stderrに有用なエラーがあれば内容を含めて報告
+          const tailErr = stderrLines.slice(-5).join(" / ");
+          reject(new Error(`Scrapling: no output from Python (exit ${code})${tailErr ? ` — stderr: ${tailErr}` : ""}`));
           return;
         }
         try {
@@ -176,12 +189,28 @@ export class ThreadsScraperScrapling implements IThreadsScraper {
     opts?: ScrapeAccountPostsDetailedOpts,
   ): Promise<ScrapedPost[]> {
     this.onProgress(`[scrapling] @${username} の詳細投稿を収集中...`);
-    const res = await this._runPython({
-      action: "account_posts_detailed",
-      username,
-      target_matches: targetMatches,
-      max_processed_urls: opts?.maxProcessedUrls ?? 200,
-    });
+    // Python が stderr に出す `[合致X/Y|処理Z|...]` 形式を解析して onPostScraped を駆動。
+    // これにより UI の進捗バーが Scrapling 利用時も更新される。
+    const matchProgressRe = /\[合致(\d+)\/(\d+)\|処理(\d+)\]/;
+    const res = await this._runPython(
+      {
+        action: "account_posts_detailed",
+        username,
+        target_matches: targetMatches,
+        max_processed_urls: opts?.maxProcessedUrls ?? 200,
+      },
+      (line) => {
+        const m = matchProgressRe.exec(line);
+        if (m && opts?.onPostScraped) {
+          const matched = parseInt(m[1], 10);
+          const target = parseInt(m[2], 10);
+          const processed = parseInt(m[3], 10);
+          // _post は Scrapling 経由では1件単位で渡せないので null を渡す。
+          // 呼び出し側 (monitor-accounts) は matched/target/processed のみ参照する。
+          opts.onPostScraped(matched, target, processed, null, true);
+        }
+      },
+    );
     if (!res.ok) throw new Error(`Scrapling scrapeAccountPostsDetailed: ${res.error}`);
     const posts = (res.posts ?? []).map(mapPost);
     return opts?.matchFilter ? posts.filter(opts.matchFilter) : posts;
