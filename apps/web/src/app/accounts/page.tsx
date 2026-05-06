@@ -71,8 +71,10 @@ function AddAccountForm({ onAdded }: { onAdded: () => void }) {
         platform,
         username,
         displayName: displayName || undefined,
-        // X は storageState 方式なので password 空でも OK
-        credentials: password ? { password } : {},
+        // 自動ログイン時に Worker が credentials.username を入力欄に書き込むため
+        // password の有無に関わらず username も credentials に同梱する。
+        // X は storageState 方式なので password 空でも OK。
+        credentials: password ? { username, password } : { username },
       });
       setOpen(false);
       setUsername("");
