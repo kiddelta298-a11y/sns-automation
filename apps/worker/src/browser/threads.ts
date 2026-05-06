@@ -444,12 +444,25 @@ export class ThreadsBrowser {
    * 新規投稿ボタンをクリック（フォールバック付き）
    */
   private async clickNewPostButton(): Promise<void> {
+    // Threads の Web UI は新旧2系統あり、それぞれで「投稿を始める」UIが違う:
+    //   旧: ヘッダの [作成] / [Create] アイコンボタン
+    //   新: ホームフィード上部の「Start a thread...」プレースホルダ風 textbox
+    // どちらかを順に試して、最初に見つかったものをクリックする。
     await this.clickFirstAvailable(
       [
+        // 新UI（最近Threadsで主流）: ホームの「スレッドを始める…」プレースホルダ
+        this.page.locator('div[role="button"]').filter({ hasText: /スレッドを始める|Start a thread/i }),
+        this.page.locator('[role="textbox"]').filter({ hasText: /スレッドを始める|Start a thread/i }),
+        this.page.locator('[contenteditable="true"]').filter({ hasText: /スレッドを始める|Start a thread/i }),
+        this.page.locator('[aria-label*="スレッドを始める"]'),
+        this.page.locator('[aria-label*="Start a thread"]'),
+        // 旧UI: ヘッダの「作成」「Create」「投稿」ボタン
         this.page.locator('[aria-label="作成"]'),
         this.page.locator('[aria-label="Create"]'),
         this.page.locator('[aria-label="新規投稿"]'),
         this.page.locator('[aria-label="New post"]'),
+        this.page.locator('[aria-label="投稿"]'),
+        this.page.locator('[aria-label="Post"]'),
         this.page.locator('a, button, div[role="button"]').filter({ hasText: /^作成$/ }),
         this.page.locator('a, button, div[role="button"]').filter({ hasText: /^Create$/ }),
       ],
