@@ -1267,11 +1267,17 @@ export default function ThreadsAnalysisPage() {
   const [autoPostSelectedAccountIds, setAutoPostSelectedAccountIds] = useState<string[]>([]);
   const [autoPostInterval, setAutoPostInterval] = useState<string>("60");
   const [autoPostMaxCount, setAutoPostMaxCount] = useState<string>("10");
-  const [autoPostIncludeImages, setAutoPostIncludeImages] = useState<boolean>(false);
+  // Threads から収集される投稿は大半が画像付きのため、既定で「画像付きも含める」を有効にする。
+  // OFF にすると hasImage=false の投稿だけが対象になり、ほぼ常に0件で「対象がない」エラーになるのを回避。
+  const [autoPostIncludeImages, setAutoPostIncludeImages] = useState<boolean>(true);
   const [autoPostSubmitting, setAutoPostSubmitting] = useState(false);
   const [autoPostMessage, setAutoPostMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [autoPostPostIds, setAutoPostPostIds] = useState<string[]>([]);
   const [autoPostStatus, setAutoPostStatus] = useState<AutoPostStatusResult | null>(null);
+  // 候補件数プレビュー（選択グループ × フィルタ × 画像トグル の結果）
+  const [autoPostPreview, setAutoPostPreview] = useState<{
+    total: number; withImage: number; withoutImage: number; loading: boolean;
+  }>({ total: 0, withImage: 0, withoutImage: 0, loading: false });
 
   // ── Instagramストーリー投稿タブ（フォルダ起点・フィード/ストーリー両対応） ──
   const [igAccounts, setIgAccounts] = useState<ApiAccount[]>([]);
@@ -1428,6 +1434,33 @@ export default function ThreadsAnalysisPage() {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   };
+
+  // 自動投稿の候補件数プレビュー: 選択グループ・フィルタが変わったら集計し直す
+  useEffect(() => {
+    let cancelled = false;
+    if (autoPostGroupIds.length === 0) {
+      setAutoPostPreview({ total: 0, withImage: 0, withoutImage: 0, loading: false });
+      return;
+    }
+    setAutoPostPreview((p) => ({ ...p, loading: true }));
+    (async () => {
+      try {
+        const lists = await Promise.all(
+          autoPostGroupIds.map((gid) =>
+            getMonitoredPostsFiltered(gid, { ...filterToQuery(autoPostFilter), limit: 200 }).catch(() => []),
+          ),
+        );
+        if (cancelled) return;
+        const merged = lists.flat();
+        const withImage = merged.filter((p) => p.hasImage).length;
+        const withoutImage = merged.length - withImage;
+        setAutoPostPreview({ total: merged.length, withImage, withoutImage, loading: false });
+      } catch {
+        if (!cancelled) setAutoPostPreview({ total: 0, withImage: 0, withoutImage: 0, loading: false });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [autoPostGroupIds, autoPostFilter]);
 
   const handleQueueAutoPost = async () => {
     setAutoPostMessage(null);
@@ -1892,11 +1925,51 @@ export default function ThreadsAnalysisPage() {
                     </p>
                     <p className="text-[10px]" style={{ color: "rgba(240,238,255,0.4)" }}>
                       {autoPostIncludeImages
-                        ? "ON: バズ投稿の画像付き投稿（テキスト+画像）も自動投稿対象"
-                        : "OFF: テキストのみの投稿だけが対象"}
+                        ? "ON: 全ての収集投稿（テキスト + 画像付き）が自動投稿対象（推奨）"
+                        : "OFF: テキストのみの投稿だけが対象（候補が0件になりがち）"}
                     </p>
                   </div>
                 </button>
+
+                {/* 候補件数プレビュー（リアルタイム集計） */}
+                {autoPostGroupIds.length > 0 && (() => {
+                  const eligible = autoPostIncludeImages
+                    ? autoPostPreview.total
+                    : autoPostPreview.withoutImage;
+                  const isWarn = eligible === 0;
+                  const tipNeedToggle = !autoPostIncludeImages && autoPostPreview.withImage > 0;
+                  return (
+                    <div className="rounded-xl px-3 py-2 text-xs"
+                      style={{
+                        background: isWarn ? "rgba(244,63,94,0.08)" : "rgba(34,197,94,0.08)",
+                        border: `1px solid ${isWarn ? "rgba(244,63,94,0.3)" : "rgba(34,197,94,0.3)"}`,
+                        color: isWarn ? "#fda4af" : "#86efac",
+                      }}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span style={{ fontWeight: 600 }}>
+                          {autoPostPreview.loading
+                            ? "候補件数を集計中…"
+                            : `候補 ${eligible} 件 / 自動投稿数上限 ${autoPostMaxCount} 件`}
+                        </span>
+                        <span style={{ color: "rgba(240,238,255,0.5)", fontSize: 10 }}>
+                          （収集投稿 合計 {autoPostPreview.total}：画像なし {autoPostPreview.withoutImage} / 画像あり {autoPostPreview.withImage}）
+                        </span>
+                      </div>
+                      {tipNeedToggle && (
+                        <div className="mt-1.5 text-[11px]" style={{ color: "#fbbf24" }}>
+                          ⚠ 画像付きの投稿が {autoPostPreview.withImage} 件あります。
+                          上のトグルを <b>ON</b> にすると候補に加えられます。
+                        </div>
+                      )}
+                      {isWarn && !tipNeedToggle && (
+                        <div className="mt-1.5 text-[11px]" style={{ color: "#fda4af" }}>
+                          ⚠ フィルター条件を満たす投稿がありません。
+                          フィルター値を緩めるか、まず「Threads投稿収集」タブで投稿を収集してください。
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {autoPostMessage && (
                   <div
