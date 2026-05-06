@@ -3,7 +3,10 @@ import IORedis from "ioredis";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
-const connectionOpts = { host: new URL(REDIS_URL.replace("redis://","http://")).hostname, port: parseInt(new URL(REDIS_URL.replace("redis://","http://")).port || "6379") };
+// Upstash の rediss:// (TLS) と認証付きURLを正しく扱うため、URL文字列で IORedis インスタンスを生成して共有する。
+// 旧実装は new URL(...).hostname/port だけ取り出していたため、TLS/パスワード/dbが落ち、Upstash に接続できず
+// `monitorAccountsQueue.add` などの BullMQ操作がレスポンスを返さずハングしていた。
+const connectionOpts = new IORedis(REDIS_URL, { maxRetriesPerRequest: null }) as any;
 
 // トレンド収集ジョブキュー
 export const collectTrendsQueue = new Queue("collect-trends", {
