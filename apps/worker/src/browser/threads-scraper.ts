@@ -619,7 +619,15 @@ export class ThreadsScraper implements IThreadsScraper {
         var imageUrls: string[] = [];
         for (var ii = 0; ii < imgEls.length && imageUrls.length < 5; ii++) {
           var src = imgEls[ii].getAttribute("src") || "";
-          if (src.startsWith("http") && !src.includes(".svg")) imageUrls.push(src);
+          // ── 投稿のメイン画像のみ抽出（プロフィール画像は除外） ──
+          // Instagram/Threads のCDNパスは `/t51.<group>-<variant>/` 形式:
+          //   - t51.2885-19  : プロフィール画像（投稿者アバター）← 除外
+          //   - t51.2885-6   : 小サムネ／プロフィール ← 除外
+          //   - t51.29350-15 / t51.75761-15 : 投稿のメイン画像 ← 残す
+          if (!src.startsWith("http")) continue;
+          if (src.includes(".svg")) continue;
+          if (/\/t51\.2885-(19|6)\//.test(src)) continue;
+          imageUrls.push(src);
         }
 
         // NOTE: page.evaluate内ではfunction宣言を使うとesbuild __name でクラッシュする
@@ -994,7 +1002,10 @@ export class ThreadsScraper implements IThreadsScraper {
         var imageUrls = [];
         for (var ii = 0; ii < imgEls.length && imageUrls.length < 3; ii++) {
           var src = imgEls[ii].getAttribute("src") || "";
-          if (src.startsWith("http") && !src.includes(".svg")) imageUrls.push(src);
+          if (!src.startsWith("http")) continue;
+          if (src.includes(".svg")) continue;
+          if (/\/t51\.2885-(19|6)\//.test(src)) continue; // プロフィール画像を除外
+          imageUrls.push(src);
         }
         var hasImage = imageUrls.length > 0;
 

@@ -185,18 +185,21 @@ def extract_posts_from_html(html: str, limit: int = 50) -> list[dict]:
             href = author_el.get("href", "")
             author_username = re.sub(r"^/@?", "", href).split("/")[0] or None
 
-        # 画像
+        # 画像（投稿のメイン画像のみ。プロフィール画像 t51.2885-19/-6 は除外）
         image_urls: list[str] = []
         for img in container.select("img"):
             src = img.get("src", "")
-            if (
+            if not (
                 any(cdn in src for cdn in ("cdninstagram", "fbcdn", "scontent"))
                 and src.startswith("http")
                 and ".svg" not in src
             ):
-                image_urls.append(src)
-                if len(image_urls) >= 3:
-                    break
+                continue
+            if re.search(r"/t51\.2885-(19|6)/", src):
+                continue
+            image_urls.append(src)
+            if len(image_urls) >= 3:
+                break
 
         like, repost, reply, view = _parse_engagement(container)
 
