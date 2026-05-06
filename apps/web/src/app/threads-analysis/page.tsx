@@ -953,6 +953,40 @@ function GroupCard({ group, onDeleted, onUpdated }: {
             <>
               {/* 一括入力 */}
               <div className="mt-4 space-y-2">
+                {/* 保存済みエンゲージメント閾値（投稿収集時に適用される） */}
+                {group.buzzThresholds && (
+                  (group.buzzThresholds.minLikes > 0 ||
+                   group.buzzThresholds.minReplies > 0 ||
+                   group.buzzThresholds.minReposts > 0 ||
+                   group.buzzThresholds.minViews > 0) ? (
+                    <div className="flex items-center gap-2 flex-wrap rounded-lg px-3 py-2"
+                      style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)" }}>
+                      <span className="text-xs font-semibold" style={{ color: "#fbbf24" }}>
+                        🔎 投稿収集フィルター（バズ閾値）
+                      </span>
+                      {group.buzzThresholds.minLikes > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(244,114,182,0.15)", color: "#f9a8d4" }}>
+                          ❤ ≥ {group.buzzThresholds.minLikes.toLocaleString()}
+                        </span>
+                      )}
+                      {group.buzzThresholds.minReplies > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(96,165,250,0.15)", color: "#93c5fd" }}>
+                          💬 ≥ {group.buzzThresholds.minReplies.toLocaleString()}
+                        </span>
+                      )}
+                      {group.buzzThresholds.minReposts > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}>
+                          🔁 ≥ {group.buzzThresholds.minReposts.toLocaleString()}
+                        </span>
+                      )}
+                      {group.buzzThresholds.minViews > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(168,85,247,0.15)", color: "#d8b4fe" }}>
+                          👁 ≥ {group.buzzThresholds.minViews.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  ) : null
+                )}
                 <div className="flex items-center gap-2">
                   <Users className="h-3.5 w-3.5" style={{ color: "#a78bfa" }} />
                   <p className="text-xs font-semibold" style={{ color: "#a78bfa" }}>
