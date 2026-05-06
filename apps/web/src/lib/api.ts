@@ -1698,6 +1698,28 @@ export function deleteAffiliateLink(id: string) {
   return apiFetch<{ ok: boolean }>(`/api/affiliate/links/${id}`, { method: "DELETE" });
 }
 
+// ─── ASP プロバイダ（プルダウン選択肢マスタ） ─────────────────────
+export interface ApiAspProvider {
+  id: string;
+  name: string;
+  created_at?: string;
+}
+
+export function getAspProviders() {
+  return apiFetch<ApiAspProvider[]>("/api/affiliate/asps");
+}
+
+export function createAspProvider(name: string) {
+  return apiFetch<ApiAspProvider>("/api/affiliate/asps", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteAspProvider(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/affiliate/asps/${id}`, { method: "DELETE" });
+}
+
 export function getStoryPosts(limit = 100) {
   return apiFetch<ApiStoryPost[]>(`/api/affiliate/posts?limit=${limit}`);
 }

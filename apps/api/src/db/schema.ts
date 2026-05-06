@@ -1064,3 +1064,19 @@ export const affiliateLinksRelations = relations(affiliateLinks, ({ many }) => (
   aspReports: many(aspReports),
   nameMappings: many(aspNameMapping),
 }));
+
+// ============================================================
+// asp_providers（アフィリエイトASPの選択肢マスタ）
+// ============================================================
+//   ユーザーが追加・削除できるASP名のホワイトリスト。
+//   affiliate_links.asp はテキスト保持なので、このテーブルは UI 上の
+//   プルダウン項目を管理する目的のみ。
+export const aspProviders = pgTable(
+  "asp_providers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: varchar("name", { length: 60 }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("idx_asp_providers_name").on(t.name)],
+);

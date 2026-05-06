@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, desc, sql, and, gte, lte } from "drizzle-orm";
+import { eq, desc, sql, and, gte, lte, asc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   affiliateLinks,
@@ -7,9 +7,50 @@ import {
   linkClicks,
   aspReports,
   accounts,
+  aspProviders,
 } from "../db/schema.js";
 
 export const affiliateRouter = new Hono();
+
+// ============================================================
+// asp_providers（プルダウン選択肢マスタ）
+// ============================================================
+
+// GET /api/affiliate/asps — 選択肢一覧
+affiliateRouter.get("/asps", async (c) => {
+  const rows = await db.query.aspProviders.findMany({
+    orderBy: (t, { asc }) => [asc(t.name)],
+  });
+  return c.json(rows);
+});
+
+// POST /api/affiliate/asps — 新規追加
+affiliateRouter.post("/asps", async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return c.json({ error: "name は必須です" }, 400);
+  if (name.length > 60) return c.json({ error: "name は60文字以内です" }, 400);
+  try {
+    const [created] = await db.insert(aspProviders).values({ name }).returning();
+    return c.json(created, 201);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/duplicate|unique/i.test(msg)) {
+      return c.json({ error: "この名前は既に登録されています" }, 409);
+    }
+    console.error("[POST /api/affiliate/asps] failed:", e);
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// DELETE /api/affiliate/asps/:id — 削除
+affiliateRouter.delete("/asps/:id", async (c) => {
+  const id = c.req.param("id");
+  const result = await db.delete(aspProviders).where(eq(aspProviders.id, id)).returning();
+  if (result.length === 0) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
 
 // ─── slug 生成（8文字英数字、衝突時リトライ） ────────────────────
 const SLUG_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";

@@ -11,8 +11,12 @@ import {
   updateAffiliateLink,
   deleteAffiliateLink,
   getAccounts,
+  getAspProviders,
+  createAspProvider,
+  deleteAspProvider,
   type ApiAffiliateLink,
   type ApiAccount,
+  type ApiAspProvider,
 } from "@/lib/api";
 
 // "全件" / 個別アカウントID / "shared"(=未割当) を表す
@@ -55,9 +59,14 @@ function shortRedirectUrl(slug: string): string {
 export default function AffiliateLinksPage() {
   const [links, setLinks] = useState<ApiAffiliateLink[]>([]);
   const [accounts, setAccounts] = useState<ApiAccount[]>([]);
+  const [aspList, setAspList] = useState<ApiAspProvider[]>([]);
   const [activeAccount, setActiveAccount] = useState<AccountFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // ASP管理モーダル
+  const [showAspManager, setShowAspManager] = useState(false);
+  const [newAspName, setNewAspName] = useState("");
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -81,18 +90,46 @@ export default function AffiliateLinksPage() {
         activeAccount === "all" ? undefined :
         activeAccount === "shared" ? { accountId: null as null } :
         { accountId: activeAccount };
-      const [data, accs] = await Promise.all([
+      const [data, accs, asps] = await Promise.all([
         getAffiliateLinks(opts),
         getAccounts(),
+        getAspProviders(),
       ]);
       setLinks(data);
       setAccounts(accs);
+      setAspList(asps);
     } catch (e) {
       setError(e instanceof Error ? e.message : "読み込み失敗");
     } finally {
       setLoading(false);
     }
   }, [activeAccount]);
+
+  const reloadAsps = useCallback(async () => {
+    try { setAspList(await getAspProviders()); } catch {}
+  }, []);
+
+  const handleAddAsp = async () => {
+    const name = newAspName.trim();
+    if (!name) return;
+    try {
+      await createAspProvider(name);
+      setNewAspName("");
+      await reloadAsps();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ASP追加に失敗");
+    }
+  };
+
+  const handleDeleteAsp = async (id: string, name: string) => {
+    if (!confirm(`ASP「${name}」を選択肢から削除しますか？\n（既に登録済みリンクのASP表記は変わりません）`)) return;
+    try {
+      await deleteAspProvider(id);
+      await reloadAsps();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ASP削除に失敗");
+    }
+  };
 
   useEffect(() => { void load(); }, [load]);
 
@@ -256,9 +293,32 @@ export default function AffiliateLinksPage() {
                   className="w-full rounded-lg px-3 py-2 text-sm mt-1" style={GLASS.input} />
               </div>
               <div>
-                <label className="text-xs" style={{ color: "rgba(240,238,255,0.6)" }}>ASP * (A8/バリュコマ等)</label>
-                <input value={asp} onChange={(e) => setAsp(e.target.value)}
-                  className="w-full rounded-lg px-3 py-2 text-sm mt-1" style={GLASS.input} />
+                <label className="flex items-center justify-between text-xs" style={{ color: "rgba(240,238,255,0.6)" }}>
+                  <span>ASP *</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAspManager(true)}
+                    className="text-[10px] underline"
+                    style={{ color: "#a78bfa" }}
+                  >
+                    選択肢を管理
+                  </button>
+                </label>
+                <select
+                  value={asp}
+                  onChange={(e) => setAsp(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-sm mt-1"
+                  style={GLASS.input}
+                >
+                  <option value="">選択してください</option>
+                  {aspList.map((a) => (
+                    <option key={a.id} value={a.name}>{a.name}</option>
+                  ))}
+                  {/* 編集モードで既存値が選択肢に無い場合（手動登録された旧データ等）も維持 */}
+                  {asp && !aspList.some((a) => a.name === asp) && (
+                    <option value={asp}>{asp}（旧データ）</option>
+                  )}
+                </select>
               </div>
               <div className="md:col-span-2">
                 <label className="text-xs" style={{ color: "rgba(240,238,255,0.6)" }}>Tracking URL *</label>
@@ -423,6 +483,91 @@ export default function AffiliateLinksPage() {
           </div>
         )}
       </div>
+
+      {/* ASP 管理モーダル */}
+      {showAspManager && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+          onClick={() => setShowAspManager(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-5 space-y-4"
+            style={GLASS.card}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold" style={{ color: "#c4b5fd" }}>
+                ASP選択肢の管理
+              </h3>
+              <button
+                onClick={() => setShowAspManager(false)}
+                className="rounded p-1.5"
+                style={GLASS.btnGhost}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs" style={{ color: "rgba(240,238,255,0.5)" }}>
+              ここで追加した名前が、リンク作成画面のASPプルダウンに表示されます。
+              既に登録済みのリンクのASP表記には影響しません。
+            </p>
+
+            {/* 新規追加 */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newAspName}
+                onChange={(e) => setNewAspName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleAddAsp(); } }}
+                placeholder="ASP名（例: A8.net）"
+                maxLength={60}
+                className="flex-1 rounded-lg px-3 py-2 text-sm"
+                style={GLASS.input}
+              />
+              <button
+                onClick={handleAddAsp}
+                disabled={!newAspName.trim()}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50"
+                style={GLASS.btnPrimary}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                追加
+              </button>
+            </div>
+
+            {/* 一覧 */}
+            <div className="space-y-1.5 max-h-80 overflow-y-auto">
+              {aspList.length === 0 ? (
+                <p className="text-xs text-center py-4" style={{ color: "rgba(240,238,255,0.4)" }}>
+                  まだ登録がありません
+                </p>
+              ) : (
+                aspList.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between rounded-lg px-3 py-2"
+                    style={GLASS.inner}
+                  >
+                    <span className="text-sm" style={{ color: "rgba(240,238,255,0.85)" }}>
+                      {p.name}
+                    </span>
+                    <button
+                      onClick={() => handleDeleteAsp(p.id, p.name)}
+                      className="rounded p-1.5"
+                      style={{ color: "#fb7185" }}
+                      title="削除"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
