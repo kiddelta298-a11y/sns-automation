@@ -657,18 +657,20 @@ export class ThreadsScraper implements IThreadsScraper {
 
         // ── 方式2: aria-label で取れなかった指標を、mainContainer内のSVG付きボタン
         //           位置ベース推定でフォールバック（順序: ❤いいね, 💬返信, 🔄リポスト, ✈️シェア） ──
+        //   重要: 数値テキストを持たないアイコン（メニュー/共有 等）は actionCounts に
+        //   含めない。push(0) で穴埋めすると like/reply/repost のインデックスが1つズレ、
+        //   実際の "likeの数値" が replyフィールドに格納されてしまうバグの原因になる。
         if (likeCount === 0 || replyCount === 0 || repostCount === 0) {
           var actionCounts: number[] = [];
           for (var ab = 0; ab < buttons.length; ab++) {
             var abtn = buttons[ab];
             if (!abtn.querySelector("svg")) continue;
-            // ボタンがアクションバー位置（投稿本文より下）にあるかチェック
             var abRect = abtn.getBoundingClientRect();
             if (abRect.width === 0 || abRect.height === 0) continue;
 
             var abText = (abtn.textContent || "").replace(/[,，\s]/g, "").trim();
             var abm = abText.match(/([\d.]+)([KkMm万千]?)/);
-            if (!abm) { actionCounts.push(0); continue; }
+            if (!abm) continue; // 数値を持たないボタンはスキップ
             var abn = parseFloat(abm[1]);
             var abu = (abm[2] || "").toLowerCase();
             var abcnt = abu === "k" ? Math.round(abn * 1000)

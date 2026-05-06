@@ -487,7 +487,14 @@ ${postsText}
         await sqlClient.end();
       }
     },
-    { connection, concurrency: 1 },
+    {
+      connection,
+      concurrency: 1,
+      // Render Free Plan の OOM kill による無限再キューを防ぐ
+      maxStalledCount: 0,
+      // Browser 操作 + LLM 呼び出しが長時間かかるため lock TTL を延長
+      lockDuration: 5 * 60 * 1000,
+    },
   );
 
   worker.on("failed", (job, err) => {

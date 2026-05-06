@@ -379,7 +379,15 @@ export function createMonitorAccountsWorker() {
         await sqlClient.end();
       }
     },
-    { connection, concurrency: 1 },
+    {
+      connection,
+      concurrency: 1,
+      // Render Free Plan の OOM kill による無限再キューを防ぐ:
+      // SIGTERMでlockが切れても "stalled" として再投入しない（即failedにする）
+      maxStalledCount: 0,
+      // Browser 操作（プロフィール訪問〜詳細抽出 N件）が長時間かかるため lock TTL を延長
+      lockDuration: 5 * 60 * 1000,
+    },
   );
 
   worker.on("failed", (job, err) => {
