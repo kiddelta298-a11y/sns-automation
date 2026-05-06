@@ -198,9 +198,31 @@ researchRouter.post("/genres/:id/analyze", async (c) => {
   const genre = await db.query.adultGenres.findFirst({ where: eq(adultGenres.id, genreId) });
   if (!genre) return c.json({ error: "Genre not found" }, 404);
 
-  // 実行中のジョブがあれば拒否
+  // 参考アカウントが0件なら分析不可（空グループガード）
+  const refCount = await db.select({ n: sql<number>`count(*)::int` })
+    .from(referenceAccounts)
+    .where(eq(referenceAccounts.genreId, genreId));
+  if ((refCount[0]?.n ?? 0) === 0) {
+    return c.json({
+      error: "参考アカウントが登録されていません。先にこのグループへ Threads アカウントを追加してください。",
+    }, 400);
+  }
+
+  // 5分以上前から pending/running のままのレコードはゾンビとして失敗扱いに自動更新。
+  // Worker がクラッシュ・再起動した結果 BullMQ ジョブが消失していても新規分析を再開できる。
+  await db.execute(sql`
+    UPDATE ${genreProfiles}
+    SET status='failed',
+        error_message=COALESCE(error_message, 'timed out — worker did not complete'),
+        updated_at=NOW()
+    WHERE genre_id = ${genreId}
+      AND status IN ('pending','running')
+      AND created_at < NOW() - INTERVAL '5 minutes'
+  `);
+
+  // それでも 5分以内の running があれば二重起動防止のため拒否
   const running = await db.query.genreProfiles.findFirst({
-    where: (t, { and, eq }) => and(eq(t.genreId, genreId), eq(t.status, "running")),
+    where: (t, { and, eq, inArray }) => and(eq(t.genreId, genreId), inArray(t.status, ["pending", "running"])),
   });
   if (running) return c.json({ error: "Analysis is already running" }, 409);
 
@@ -221,19 +243,38 @@ researchRouter.post("/genres/:id/analyze", async (c) => {
 });
 
 // GET /api/research/analyze-jobs/:jobId — 分析ジョブの進捗状態を取得
+//   BullMQ から消失していても DB の genre_profiles から状態を引き直すフォールバックを持つ。
+//   これがないと Worker クラッシュ後に UI が永遠に「実行中」を表示し続けてしまう。
 researchRouter.get("/analyze-jobs/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
   const job = await analyzeGenreQueue.getJob(jobId);
-  if (!job) return c.json({ error: "job not found" }, 404);
-  const state = await job.getState().catch(() => "unknown");
-  return c.json({
-    id: job.id,
-    state,
-    progress: job.progress,
-    failedReason: job.failedReason ?? null,
-    timestamp: job.timestamp,
-    finishedOn: job.finishedOn ?? null,
+  if (job) {
+    const state = await job.getState().catch(() => "unknown");
+    return c.json({
+      id: job.id,
+      state,
+      progress: job.progress,
+      failedReason: job.failedReason ?? null,
+      timestamp: job.timestamp,
+      finishedOn: job.finishedOn ?? null,
+    });
+  }
+  // BullMQ から消えていたら DB を見る（最新 profile の status を返す）
+  const latest = await db.query.genreProfiles.findFirst({
+    orderBy: (t, { desc }) => [desc(t.createdAt)],
   });
+  if (latest && (latest.status === "completed" || latest.status === "failed")) {
+    return c.json({
+      id: jobId,
+      state: latest.status,
+      progress: latest.status === "completed" ? 100 : 0,
+      failedReason: latest.errorMessage ?? null,
+      timestamp: latest.createdAt?.getTime?.() ?? null,
+      finishedOn: latest.updatedAt?.getTime?.() ?? null,
+      _fallback: "from-db",
+    });
+  }
+  return c.json({ error: "job not found" }, 404);
 });
 
 // GET /api/research/genres/:id/profile — 最新プロファイル取得
@@ -708,6 +749,16 @@ researchRouter.post("/genres/:id/monitor", async (c) => {
   const genreId = c.req.param("id");
   const genre = await db.query.adultGenres.findFirst({ where: eq(adultGenres.id, genreId) });
   if (!genre) return c.json({ error: "Genre not found" }, 404);
+
+  // 参考アカウント0件のグループでは投稿収集ができない（無言の失敗を回避）
+  const refRows = await db.select({ n: sql<number>`count(*)::int` })
+    .from(referenceAccounts)
+    .where(and(eq(referenceAccounts.genreId, genreId), eq(referenceAccounts.platform, "threads")));
+  if ((refRows[0]?.n ?? 0) === 0) {
+    return c.json({
+      error: "このグループには Threads 参考アカウントが登録されていません。先にアカウントを追加してください。",
+    }, 400);
+  }
 
   type FilterBody = {
     minLikes?: number; maxLikes?: number;
