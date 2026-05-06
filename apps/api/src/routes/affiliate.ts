@@ -37,7 +37,16 @@ async function generateUniqueSlug(maxAttempts = 10): Promise<string> {
 // ============================================================
 
 // GET /api/affiliate/links — 一覧（累計クリック・累計CV・累計revenue 集計付き）
+//   ?accountId=<uuid> でアカウント別フィルタ
+//   ?accountId=null で「未割当（共有）」リンクのみ
 affiliateRouter.get("/links", async (c) => {
+  const accountIdParam = c.req.query("accountId");
+  let whereClause = sql``;
+  if (accountIdParam === "null" || accountIdParam === "shared") {
+    whereClause = sql`WHERE l.account_id IS NULL`;
+  } else if (accountIdParam) {
+    whereClause = sql`WHERE l.account_id = ${accountIdParam}`;
+  }
   const rows = await db.execute(sql`
     SELECT
       l.*,
@@ -55,6 +64,7 @@ affiliateRouter.get("/links", async (c) => {
       FROM asp_reports
       GROUP BY link_id
     ) r ON r.link_id = l.id
+    ${whereClause}
     ORDER BY l.created_at DESC
   `);
   return c.json(rows);
@@ -83,6 +93,7 @@ affiliateRouter.post("/links", async (c) => {
       ? Math.floor(body.unitPayout)
       : null;
   const memo = typeof body.memo === "string" ? body.memo : null;
+  const accountId = typeof body.accountId === "string" && body.accountId.trim() ? body.accountId.trim() : null;
 
   // 任意で slug を指定可能。指定されなければ自動発行。
   let shortSlug = typeof body.shortSlug === "string" && body.shortSlug.trim()
@@ -97,6 +108,7 @@ affiliateRouter.post("/links", async (c) => {
     const [created] = await db
       .insert(affiliateLinks)
       .values({
+        accountId: accountId ?? undefined,
         caseName,
         asp,
         trackingUrl,
@@ -134,6 +146,9 @@ affiliateRouter.patch("/links/:id", async (c) => {
   if (typeof body.unitPayout === "number" && Number.isFinite(body.unitPayout)) updates.unitPayout = Math.floor(body.unitPayout);
   if (typeof body.status === "string" && ["active", "paused", "dead"].includes(body.status)) updates.status = body.status;
   if (typeof body.memo === "string") updates.memo = body.memo;
+  // accountId: 文字列(uuid)で割当 / null で共有化（紐付け解除）
+  if (body.accountId === null) updates.accountId = null;
+  else if (typeof body.accountId === "string" && body.accountId.trim()) updates.accountId = body.accountId.trim();
 
   const [updated] = await db
     .update(affiliateLinks)

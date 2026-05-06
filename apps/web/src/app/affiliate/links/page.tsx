@@ -3,15 +3,20 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Loader2, Plus, Copy, Check, Trash2, ExternalLink, Edit3,
-  Tag as TagIcon, AlertCircle,
+  Tag as TagIcon, AlertCircle, Users,
 } from "lucide-react";
 import {
   getAffiliateLinks,
   createAffiliateLink,
   updateAffiliateLink,
   deleteAffiliateLink,
+  getAccounts,
   type ApiAffiliateLink,
+  type ApiAccount,
 } from "@/lib/api";
+
+// "全件" / 個別アカウントID / "shared"(=未割当) を表す
+type AccountFilter = "all" | "shared" | string;
 
 const GLASS = {
   card: { background: "rgba(15,12,30,0.7)", border: "1px solid rgba(139,92,246,0.15)" },
@@ -49,6 +54,8 @@ function shortRedirectUrl(slug: string): string {
 
 export default function AffiliateLinksPage() {
   const [links, setLinks] = useState<ApiAffiliateLink[]>([]);
+  const [accounts, setAccounts] = useState<ApiAccount[]>([]);
+  const [activeAccount, setActiveAccount] = useState<AccountFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +67,8 @@ export default function AffiliateLinksPage() {
   const [genre, setGenre] = useState("");
   const [unitPayout, setUnitPayout] = useState<string>("");
   const [memo, setMemo] = useState("");
+  // フォーム上の紐付けアカウント。"" = 共有、UUID = そのアカウントに紐付け
+  const [formAccountId, setFormAccountId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
 
@@ -67,20 +76,31 @@ export default function AffiliateLinksPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getAffiliateLinks();
+      // タブ選択に応じてサーバ側でフィルタ
+      const opts =
+        activeAccount === "all" ? undefined :
+        activeAccount === "shared" ? { accountId: null as null } :
+        { accountId: activeAccount };
+      const [data, accs] = await Promise.all([
+        getAffiliateLinks(opts),
+        getAccounts(),
+      ]);
       setLinks(data);
+      setAccounts(accs);
     } catch (e) {
       setError(e instanceof Error ? e.message : "読み込み失敗");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeAccount]);
 
   useEffect(() => { void load(); }, [load]);
 
   const reset = () => {
     setCaseName(""); setAsp(""); setTrackingUrl(""); setGenre("");
     setUnitPayout(""); setMemo(""); setEditingId(null); setShowForm(false);
+    // 新規追加時は、現在選択中のタブを初期値に
+    setFormAccountId(activeAccount !== "all" && activeAccount !== "shared" ? activeAccount : "");
   };
 
   const handleEdit = (link: ApiAffiliateLink) => {
@@ -91,6 +111,7 @@ export default function AffiliateLinksPage() {
     setGenre(link.genre ?? "");
     setUnitPayout(link.unit_payout != null ? String(link.unit_payout) : "");
     setMemo(link.memo ?? "");
+    setFormAccountId(link.account_id ?? "");
     setShowForm(true);
   };
 
@@ -102,6 +123,9 @@ export default function AffiliateLinksPage() {
     setSubmitting(true);
     setError(null);
     try {
+      const accountIdField: { accountId: string | null } = {
+        accountId: formAccountId ? formAccountId : null,
+      };
       if (editingId) {
         await updateAffiliateLink(editingId, {
           caseName: caseName.trim(),
@@ -110,6 +134,7 @@ export default function AffiliateLinksPage() {
           genre: genre.trim() || undefined,
           unitPayout: unitPayout ? Number(unitPayout) : undefined,
           memo: memo.trim() || undefined,
+          ...accountIdField,
         });
       } else {
         await createAffiliateLink({
@@ -119,6 +144,7 @@ export default function AffiliateLinksPage() {
           genre: genre.trim() || undefined,
           unitPayout: unitPayout ? Number(unitPayout) : undefined,
           memo: memo.trim() || undefined,
+          ...accountIdField,
         });
       }
       reset();
@@ -168,10 +194,10 @@ export default function AffiliateLinksPage() {
               WebkitTextFillColor: "transparent",
               backgroundClip: "text",
             }}>
-              アフィリエイト案件マスタ
+              アフィリエイトリンク
             </h1>
             <p className="text-sm mt-1" style={{ color: "rgba(240,238,255,0.55)" }}>
-              ASPの本URLから自前の短縮URLを発行し、クリック・CV・売上を一元管理
+              アカウントごとにアフィリエイトリンクを管理。短縮URLでクリック・CV・売上を集計
             </p>
           </div>
           <button
@@ -182,6 +208,35 @@ export default function AffiliateLinksPage() {
             <Plus className="h-4 w-4" />
             新規追加
           </button>
+        </div>
+
+        {/* アカウント別タブ */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Users className="h-4 w-4" style={{ color: "rgba(240,238,255,0.4)" }} />
+          {(["all", "shared", ...accounts.map((a) => a.id)] as AccountFilter[]).map((key) => {
+            const isActive = activeAccount === key;
+            let label: string;
+            if (key === "all") label = "全件";
+            else if (key === "shared") label = "未割当（共有）";
+            else {
+              const acc = accounts.find((a) => a.id === key);
+              label = acc ? `@${acc.username}` : key.slice(0, 8);
+            }
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveAccount(key)}
+                className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
+                style={{
+                  background: isActive ? "linear-gradient(135deg, rgba(124,58,237,0.6), rgba(168,85,247,0.4))" : "rgba(255,255,255,0.04)",
+                  border: isActive ? "1px solid rgba(139,92,246,0.5)" : "1px solid rgba(139,92,246,0.18)",
+                  color: isActive ? "#e9d5ff" : "rgba(240,238,255,0.6)",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
 
         {error && (
@@ -210,6 +265,24 @@ export default function AffiliateLinksPage() {
                 <input type="url" value={trackingUrl} onChange={(e) => setTrackingUrl(e.target.value)}
                   className="w-full rounded-lg px-3 py-2 text-sm mt-1" style={GLASS.input}
                   placeholder="https://..." />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs" style={{ color: "rgba(240,238,255,0.6)" }}>
+                  紐付けアカウント
+                </label>
+                <select
+                  value={formAccountId}
+                  onChange={(e) => setFormAccountId(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-sm mt-1"
+                  style={GLASS.input}
+                >
+                  <option value="">未割当（共有・全アカウント共通）</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      @{a.username}（{a.platform}）
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="text-xs" style={{ color: "rgba(240,238,255,0.6)" }}>ジャンル</label>
@@ -267,13 +340,31 @@ export default function AffiliateLinksPage() {
                 <tbody>
                   {links.map((link) => {
                     const stColor = STATUS_COLORS[link.status] ?? STATUS_COLORS.active;
+                    const acc = link.account_id ? accounts.find((a) => a.id === link.account_id) : null;
                     return (
                       <tr key={link.id} style={{ borderBottom: "1px solid rgba(139,92,246,0.06)" }}>
                         <td className="px-3 py-3" style={{ color: "rgba(240,238,255,0.85)" }}>
                           <div className="font-medium">{link.case_name}</div>
-                          {link.genre && <div className="text-[10px]" style={{ color: "rgba(240,238,255,0.4)" }}>{link.genre}</div>}
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {acc ? (
+                              <span className="text-[10px] rounded px-1.5 py-0.5"
+                                style={{ background: "rgba(139,92,246,0.15)", color: "#c4b5fd" }}>
+                                @{acc.username}
+                              </span>
+                            ) : (
+                              <span className="text-[10px]" style={{ color: "rgba(240,238,255,0.35)" }}>
+                                未割当（共有）
+                              </span>
+                            )}
+                            {link.genre && (
+                              <span className="text-[10px]" style={{ color: "rgba(240,238,255,0.4)" }}>
+                                · {link.genre}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-3" style={{ color: "rgba(240,238,255,0.7)" }}>{link.asp}</td>
+                        {/* genre は案件名セル内に統合表示するためここからは外しても見た目は変わらないが、列ヘッダの整合は保つ */}
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
                             <code className="text-xs rounded px-2 py-1" style={{ background: "rgba(139,92,246,0.12)", color: "#c4b5fd" }}>

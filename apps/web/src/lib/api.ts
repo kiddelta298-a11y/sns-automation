@@ -1595,6 +1595,7 @@ export function getPostMetricsHistory(postId: string) {
 
 export interface ApiAffiliateLink {
   id: string;
+  account_id: string | null;
   case_name: string;
   asp: string;
   tracking_url: string;
@@ -1651,8 +1652,11 @@ export interface ApiAffiliateDashboard {
   heatmap: Array<{ dow: number; hour: number; clicks: number }>;
 }
 
-export function getAffiliateLinks() {
-  return apiFetch<ApiAffiliateLink[]>("/api/affiliate/links");
+export function getAffiliateLinks(opts?: { accountId?: string | null }) {
+  let q = "";
+  if (opts?.accountId === null) q = "?accountId=null";
+  else if (opts?.accountId) q = `?accountId=${encodeURIComponent(opts.accountId)}`;
+  return apiFetch<ApiAffiliateLink[]>(`/api/affiliate/links${q}`);
 }
 
 export function createAffiliateLink(data: {
@@ -1663,6 +1667,7 @@ export function createAffiliateLink(data: {
   genre?: string;
   unitPayout?: number;
   memo?: string;
+  accountId?: string | null;
 }) {
   return apiFetch<ApiAffiliateLink>("/api/affiliate/links", {
     method: "POST",
@@ -1680,6 +1685,7 @@ export function updateAffiliateLink(
     unitPayout: number;
     status: "active" | "paused" | "dead";
     memo: string;
+    accountId: string | null;
   }>,
 ) {
   return apiFetch<ApiAffiliateLink>(`/api/affiliate/links/${id}`, {

@@ -943,6 +943,9 @@ export const affiliateLinks = pgTable(
   "affiliate_links",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    // accountId: NULL = どのアカウントにも紐付かない共有リンク
+    //            UUID = そのアカウント専用リンク
+    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "set null" }),
     caseName: text("case_name").notNull(),
     asp: text("asp").notNull(),
     trackingUrl: text("tracking_url").notNull(),
@@ -957,6 +960,7 @@ export const affiliateLinks = pgTable(
   (t) => [
     uniqueIndex("idx_affiliate_links_short_slug").on(t.shortSlug),
     index("idx_affiliate_links_status").on(t.status),
+    index("idx_affiliate_links_account").on(t.accountId),
   ],
 );
 
